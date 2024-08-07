@@ -21,5 +21,7 @@
 #define E(t_, fmt, ...) printk(KERN_ERR fmt, ##__VA_ARGS__)
 
 #endif // DEBUG
+       
+#define currentpid current->pid
 
 #endif // __COMMON_H__

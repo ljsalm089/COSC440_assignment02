@@ -1,4 +1,4 @@
-MODULE_NAME = assignment02
+MODULE_NAME = asgn1
 
 obj-m := $(MODULE_NAME).o
 
