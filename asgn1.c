@@ -67,7 +67,7 @@ typedef DevData * PDevData;
 static PDevData device_data;
 
 // function to change the access permissions of the deivce file
-static char *asgn1_class_devnode(struct device *dev, umode_t *mode)
+static char *asgn1_class_devnode(const struct device *dev, umode_t *mode)
 {
     if (mode)
         *mode = 0666;
@@ -151,7 +151,7 @@ static loff_t expand_edge(loff_t expected_size)
     size_t current_cache_size = list_empty(&device_data->mem_list) 
         ? 0 : ((list_last_entry(&device_data->mem_list, MemNode, node)->index + 1) * PAGE_SIZE);
 
-    D(D_NAME, "current cache size: %ld, and expected size: %lld", current_cache_size, expected_size);
+    D(D_NAME, "current cache size: %d, and expected size: %lld", current_cache_size, expected_size);
 
     if (current_cache_size > expected_size) 
         return current_cache_size;
@@ -205,7 +205,7 @@ static ssize_t device_read(struct file * filep, char * buff, size_t size, loff_t
     PDevData p = device_data;
     size_t already_read_size = 0;
 
-    D(D_NAME, "Process(%d) start to read %ld bytes from the file\n", currentpid, size);
+    D(D_NAME, "Process(%d) start to read %d bytes from the file\n", currentpid, size);
     if (list_empty(&p->mem_list)) {
         D(D_NAME, "no data to read");
         goto release;
@@ -254,7 +254,7 @@ release:
 
 static ssize_t device_write(struct file * filep, const char * buff, size_t size, loff_t * offset)
 {
-    I(D_NAME, "Process(%d) start to write %ld bytes to the file\n", currentpid, size);
+    I(D_NAME, "Process(%d) start to write %d bytes to the file\n", currentpid, size);
     size_t left = size;
     PDevData p = device_data;
 
@@ -279,7 +279,7 @@ static ssize_t device_write(struct file * filep, const char * buff, size_t size,
             // write from some offset to the first page, and write from 0 to other pages
             int page_offset = node_index == start_node ? *offset % PAGE_SIZE : 0;
             size_t write_size = MIN(PAGE_SIZE - page_offset, left);
-            D(D_NAME, "write %ld bytes data to page %ld", write_size, node_index);
+            D(D_NAME, "write %d bytes data to page %d", write_size, node_index);
             if (copy_from_user(curr->page + page_offset, buff + (size - left), write_size)) {
                 size = -EFAULT;
                 goto release;
@@ -344,7 +344,7 @@ static int device_mmap(struct file *filep, struct vm_area_struct * vm_area)
         return -ERESTARTSYS;
 
     size_t mmap_size = vm_area->vm_end - vm_area->vm_start;
-    D(D_NAME, "expected mapping size: %ld", mmap_size);
+    D(D_NAME, "expected mapping size: %d", mmap_size);
     unsigned long pfn;
 
     int start_mapping_index = vm_area->vm_pgoff;
@@ -471,7 +471,7 @@ static int __init my_init(void)
     D(D_NAME, "add cdev successfully");
 
     // create class
-    device_data->clazz = class_create(THIS_MODULE, C_NAME);
+    device_data->clazz = class_create(C_NAME);
     if (IS_ERR(device_data->clazz)) {
         ret = PTR_ERR(device_data->clazz);
         E(D_NAME, "failed to create class(%s) for device: %d", C_NAME, ret);
