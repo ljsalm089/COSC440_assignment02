@@ -59,7 +59,6 @@ typedef struct dev_data {
 
     int count;
     spinlock_t count_lock;
-    unsigned long lock_flags;
 } DevData;
 typedef DevData * PDevData;
 
@@ -102,9 +101,9 @@ static void free_page_with_node(PMemNode pnode)
 
 static void try_to_wake_up_processes(void)
 {
-    spin_lock_irqsave(&device_data->count_lock, device_data->lock_flags);
+    spin_lock(&device_data->count_lock);
     int try_to_wake_number = max_process_count - device_data->count;
-    spin_unlock_irqrestore(&device_data->count_lock, device_data->lock_flags);
+    spin_unlock(&device_data->count_lock);
     if (try_to_wake_number > 0) {
         wake_up_interruptible_nr(&device_data->wait_queue, try_to_wake_number);
     }
@@ -114,12 +113,12 @@ static int device_open(struct inode *node, struct file *filep)
 {
     D(D_NAME, "process(%d) try to open the device", currentpid);
 recheck:
-    spin_lock_irqsave(&device_data->count_lock, device_data->lock_flags);
+    spin_lock(&device_data->count_lock);
     if (device_data->count < max_process_count) {
         device_data->count ++;
-        spin_unlock_irqrestore(&device_data->count_lock, device_data->lock_flags);
+        spin_unlock(&device_data->count_lock);
     } else {
-        spin_unlock_irqrestore(&device_data->count_lock, device_data->lock_flags);
+        spin_unlock(&device_data->count_lock);
         D(D_NAME, "No resource, start waiting: %d", currentpid);
         wait_event_interruptible_exclusive(device_data->wait_queue, 
                 device_data->count < max_process_count);
@@ -136,10 +135,10 @@ recheck:
 static int device_release(struct inode *node, struct file *filep)
 {
     D(D_NAME, "Process(%d) close the device", currentpid);
-    spin_lock_irqsave(&device_data->count_lock, device_data->lock_flags);
+    spin_lock(&device_data->count_lock);
     device_data->count --;
     int try_to_wake_number = max_process_count - device_data->count;
-    spin_unlock_irqrestore(&device_data->count_lock, device_data->lock_flags);
+    spin_unlock(&device_data->count_lock);
 
     if (try_to_wake_number > 0) 
         wake_up_interruptible_nr(&device_data->wait_queue, try_to_wake_number);
