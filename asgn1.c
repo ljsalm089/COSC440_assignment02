@@ -78,8 +78,10 @@ typedef struct dev_data {
     ssize_t file_size;
 
     wait_queue_head_t wait_queue;
+    wait_queue_head_t write_only_wait_queue;
 
     int count;
+    int write_only_count;
     spinlock_t count_lock;
 } DevData;
 typedef DevData * PDevData;
@@ -115,10 +117,27 @@ static PMemNode alloc_new_page(void)
 }
 
 // function to free the allocated page and node
-static void free_page_with_node(PMemNode pnode)
+static void free_page_and_node(PMemNode pnode)
 {
+    // if needs to cache the allocated pages and nodes, 
+    // just use a list to link part of the pages and nodes which will be free
+    // while need to allocate new page and node, obtain from the list first
+    // 
+    // here, to simply the code and show the respect for the kernel, just release it
     free_page((unsigned long) pnode->page);
     kfree(pnode);
+}
+
+// free all the allocated pages and nodes
+static void free_all_pages_and_nodes(void) {
+    // free all allocated pages
+    while (!list_empty(&device_data->mem_list)) {
+        PMemNode curr = list_last_entry(&device_data->mem_list,  MemNode, node);
+        list_del(&curr->node);
+
+        free_page_and_node(curr);
+        D(D_NAME, "Release a page successfully.");
+    }
 }
 
 static void try_to_wake_up_processes(void)
@@ -127,27 +146,49 @@ static void try_to_wake_up_processes(void)
     int try_to_wake_number = max_process_count - device_data->count;
     spin_unlock(&device_data->count_lock);
     if (try_to_wake_number > 0) {
+        // wake up read-write and write-only processes. Who will gain the resource, it's up to the God!
         wake_up_interruptible_nr(&device_data->wait_queue, try_to_wake_number);
+        wake_up_interruptible_nr(&device_data->write_only_wait_queue, 1);
     }
 }
     
 static int device_open(struct inode *node, struct file *filep)
 {
-    D(D_NAME, "process(%d) try to open the device", currentpid);
+    int write_only = filep->f_flags & O_WRONLY;
+    D(D_NAME, "process(%d) try to open the device, is write-only: %d", currentpid, write_only);
 recheck:
-    spin_lock(&device_data->count_lock);
-    if (device_data->count < max_process_count) {
-        device_data->count ++;
+    spin_lock(&device_data->count_lock); 
+    // write-only should be exclusive, so no other process should be reading or writing the device
+    if ((write_only && device_data->count == 0 && device_data->write_only_count == 0) 
+            // not write-only, still need to wait if there is process which is write-only accessing the device 
+            // or the read-write processes have reached the limitation
+            || (!write_only && 0 == device_data->write_only_count && device_data->count < max_process_count)) {
+        if (write_only) {
+            device_data->write_only_count ++;
+        } else {
+            device_data->count ++;
+        }
         spin_unlock(&device_data->count_lock);
     } else {
         spin_unlock(&device_data->count_lock);
         D(D_NAME, "No resource, start waiting: %d", currentpid);
-        wait_event_interruptible_exclusive(device_data->wait_queue, 
-                device_data->count < max_process_count);
+        if (write_only) {
+            wait_event_interruptible_exclusive(device_data->write_only_wait_queue,
+                    device_data->count == 0 && device_data->write_only_count == 0);
+        } else {
+            wait_event_interruptible_exclusive(device_data->wait_queue, 
+                    device_data->count < max_process_count && device_data->write_only_count == 0);
+        }
         D(D_NAME, "Process(%d) is awake, check what happen", currentpid);
         if (signal_pending(current))
             return -ERESTARTSYS;
         goto recheck;
+    }
+
+    if (write_only) {
+        // write only, clear all data before writing
+        free_all_pages_and_nodes();
+        device_data->file_size = 0;
     }
 
     D(D_NAME, "Process(%d) has gained the resource", currentpid);
@@ -156,14 +197,22 @@ recheck:
     
 static int device_release(struct inode *node, struct file *filep)
 {
-    D(D_NAME, "Process(%d) close the device", currentpid);
+    int write_only = filep->f_flags & O_WRONLY;
+    D(D_NAME, "Process(%d) close the device, is write-only: %d", currentpid, write_only);
     spin_lock(&device_data->count_lock);
-    device_data->count --;
+    if (write_only) {
+        device_data->write_only_count --;
+    } else {
+        device_data->count --;
+    }
     int try_to_wake_number = max_process_count - device_data->count;
     spin_unlock(&device_data->count_lock);
 
-    if (try_to_wake_number > 0) 
+    if (try_to_wake_number > 0) {
+        // wake up read-write and write-only processes. Who will gain the resource, it's up to the God!
         wake_up_interruptible_nr(&device_data->wait_queue, try_to_wake_number);
+        wake_up_interruptible_nr(&device_data->write_only_wait_queue, 1);
+    }
     return 0;
 }
 
@@ -671,6 +720,7 @@ static int __init my_init(void)
     memset(device_data, 0, sizeof(DevData));
     INIT_LIST_HEAD(&device_data->mem_list);
     init_waitqueue_head(&device_data->wait_queue);
+    init_waitqueue_head(&device_data->write_only_wait_queue);
 
     // initialise the semaphore
     sema_init(&device_data->sema, 1);
@@ -740,14 +790,7 @@ static void __exit my_exit(void)
 {
     I(D_NAME, "Byte, module unloaded at 0x%p\n", my_exit);
 
-    // free all allocated pages
-    while (!list_empty(&device_data->mem_list)) {
-        PMemNode curr = list_last_entry(&device_data->mem_list,  MemNode, node);
-        list_del(&curr->node);
-
-        free_page_with_node(curr);
-        D(D_NAME, "Release a page successfully.");
-    }
+    free_all_pages_and_nodes();
 
     remove_proc_entry(D_NAME, NULL);
     dev_t dev_no = MKDEV(major, 0);    
