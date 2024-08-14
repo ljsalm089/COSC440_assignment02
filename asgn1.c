@@ -336,7 +336,7 @@ static ssize_t device_write(struct file * filep, const char * buff, size_t size,
     if (expand_edge(*offset + 1 + size) < 0) {
         D(D_NAME, "failed to expand the cache size");
         size = -ENOMEM;
-        goto release;
+        goto device_write_release;
     }
 
     size_t node_index = 0;
@@ -352,7 +352,7 @@ static ssize_t device_write(struct file * filep, const char * buff, size_t size,
             D(D_NAME, "write %d bytes data to page %d", write_size, node_index);
             if (copy_from_user(curr->page + page_offset, buff + (size - left), write_size)) {
                 size = -EFAULT;
-                goto release;
+                goto device_write_release;
             }
             left -= write_size;
 
@@ -367,7 +367,7 @@ static ssize_t device_write(struct file * filep, const char * buff, size_t size,
     p->file_size = MAX(p->file_size, *offset + 1);
 
 
-release:
+device_write_release:
     up(&p->sema);
 
     return size;
@@ -556,6 +556,7 @@ static struct seq_operations asgn_seq_ops = {
     .show = asgn_proc_seq_show,
 };
 
+// open function for file in /proc folder
 static int asgn_proc_open(struct inode * nodep, struct file *filep) {
     int ret;
     void * cache = NULL;
@@ -607,6 +608,7 @@ asgn_proc_open_return:
     return ret;
 }
 
+// release function for file in /proc folder
 static int asgn_proc_release(struct inode * inodep, struct file * filep) {
     struct seq_file * p_seq_file = filep->private_data;
     
@@ -637,6 +639,7 @@ static int asgn_proc_release(struct inode * inodep, struct file * filep) {
     return ret;
 }
 
+// write function for file in /proc folder
 static ssize_t asgn_proc_write(struct file *filep, const char __user * buff, 
         size_t size, loff_t *pos) {
     if (*pos >= PROC_CACHE_SIZE || *pos < 0) return -EINVAL;
