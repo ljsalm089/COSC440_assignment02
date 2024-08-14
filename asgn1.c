@@ -17,11 +17,18 @@
 #include <linux/kobject.h>  // for structure kobject and relevant function
 #include <linux/mm.h> // for remap_pfn_range
 #include <linux/spinlock.h> // for spinlock_t and related functions
+#include <linux/proc_fs.h>  // for struct proc_ops
+#include <linux/seq_file.h> // for struct seq_operations and related functions
 
 #include "common.h"
 
 #define D_NAME "asgn1"
 #define C_NAME "assignment_class"
+
+#define PROC_CACHE_SIZE 100
+#define SEQ_TYPE_MAXIMUM 0x01
+#define SEQ_TYPE_TIPS 0x02
+#define SEQ_TYPE_PAGE 0x03
 
 #define MIN(l, r) (l) < (r) ? (l) : (r)
 #define MAX(l, r) (l) > (r) ? (l) : (r)
@@ -36,6 +43,19 @@ MODULE_PARM_DESC(major, "device major number");
 MODULE_AUTHOR("Jiasheng Li");
 MODULE_LICENSE("GPL");
 
+typedef struct seq_node {
+    struct seq_node * next;
+    short type;
+    union {
+        void * p_val;
+        int i_val;
+        float f_val;
+        char c_val;
+    } data;
+} SeqNode;
+
+typedef SeqNode * PSeqNode;
+
 // define structure to save the allocated memory
 typedef struct mem_node {
     struct list_head node;
@@ -49,6 +69,8 @@ typedef struct dev_data {
     struct class *clazz;
     struct device *device;
     struct cdev dev;
+
+    struct proc_dir_entry * proc_entry;
 
     struct semaphore sema;
 
@@ -394,6 +416,197 @@ release_sema:
     return ret; 
 }
 
+static void * asgn_proc_seq_start(struct seq_file *filep, loff_t *pos) {
+    PSeqNode node = (PSeqNode) kmalloc(sizeof(SeqNode), GFP_KERNEL);
+    memset(node, 0, sizeof(SeqNode));
+    ((void **) filep->private)[0] = (void *) node;
+    node->type = SEQ_TYPE_MAXIMUM;
+    node->data.p_val= &max_process_count;
+
+    if (!list_empty(&device_data->mem_list)) {
+        PMemNode mem_node = list_last_entry(&device_data->mem_list, MemNode, node);
+        node->next = (PSeqNode) kmalloc(sizeof(SeqNode), GFP_KERNEL);
+        node = node->next;
+        memset(node, 0, sizeof(SeqNode));
+        node->type = SEQ_TYPE_TIPS;
+        node->data.i_val = mem_node->index + 1;
+
+        struct list_head *ptr;
+        PMemNode curr;
+
+        list_for_each(ptr, &device_data->mem_list) {
+            curr = list_entry(ptr, MemNode, node);
+
+            node->next = (PSeqNode) kmalloc(sizeof(SeqNode), GFP_KERNEL);
+            node = node->next;
+            memset(node, 0, sizeof(SeqNode));
+            node->type = SEQ_TYPE_PAGE;
+            node->data.p_val = curr;
+        }
+    }
+
+    loff_t index = 0;
+    node = ((void **) filep->private)[0];
+    while (NULL != node && index <= *pos) {
+        if (index == *pos) {
+            return node;
+        }
+        node = node->next;
+        index += 1;
+    }
+
+    return NULL;
+}
+
+static void asgn_proc_seq_stop(struct seq_file *filep, void *v) {
+    PSeqNode next, node = ((void **) filep->private)[0];
+
+    while (NULL != node) {
+        next = node->next;
+        kfree(node);
+        node = next;
+    }
+}
+
+static void * asgn_proc_seq_next(struct seq_file *filep, void *v, loff_t *pos) {
+    PSeqNode node = (PSeqNode) v;
+    if (NULL == node || NULL == node->next) return NULL;
+
+    *pos += 1;
+    return (void *)node->next;
+}
+
+static int asgn_proc_seq_show(struct seq_file *filep, void *v) {
+    if (NULL == v) return -EINVAL;
+
+    PSeqNode node = (PSeqNode) v;
+    switch (node->type) {
+        case SEQ_TYPE_MAXIMUM:
+            seq_printf(filep, "Maximum process accessing count: %d\n", 
+                    * ((int *)node->data.p_val));
+            break;
+        case SEQ_TYPE_TIPS:
+            seq_printf(filep, "Already allocated pages (%d):\n", node->data.i_val);
+            break;
+        case SEQ_TYPE_PAGE:
+            PMemNode mem_node = (PMemNode) node->data.p_val;
+            seq_printf(filep, "Page %d: from 0x%p to 0x%p\n", mem_node->index, 
+                    mem_node->page, mem_node->page + PAGE_SIZE);
+            break;
+        default:
+            seq_printf(filep, "Unknown information, type: %d\n", (int) node->type);
+            break;
+    }
+    return 0;
+}
+
+static struct seq_operations asgn_seq_ops = {
+    .start = asgn_proc_seq_start,
+    .stop = asgn_proc_seq_stop,
+    .next = asgn_proc_seq_next,
+    .show = asgn_proc_seq_show,
+};
+
+static int asgn_proc_open(struct inode * nodep, struct file *filep) {
+    int ret;
+    void * cache = NULL;
+    void ** private = (void **) kmalloc(2 * sizeof(void *), GFP_KERNEL);
+
+    if (IS_ERR(private)) {
+        ret = PTR_ERR(private);
+        E(D_NAME, "Unable to allocate memory for reading and writing: %d", ret);
+        goto asgn_proc_open_return;
+    }
+    memset(private, 0, 2 * sizeof(void *));
+        
+
+    // if open the file as writable, allocate buffer for writing
+    if (filep->f_flags & O_RDWR || filep->f_flags & O_WRONLY) {
+        cache = kmalloc(PROC_CACHE_SIZE, GFP_KERNEL);
+        if (IS_ERR(cache)) {
+            ret = PTR_ERR(cache);
+            E(D_NAME, "Unable to allocate memory for writing: %d", ret);
+            goto asgn_proc_open_release_private;
+        }
+        memset(cache, 0, PROC_CACHE_SIZE);
+        D(D_NAME, "Address of allocated cache for writing: 0x%p", cache);
+    }
+
+    ret = seq_open(filep, &asgn_seq_ops);
+
+    if (0 != ret) {
+        E(D_NAME, "Failed to initilise for sequential reading: %d", ret);
+        goto asgn_proc_open_release_cache;
+    }
+
+    struct seq_file * p_seq_file = (struct seq_file *) filep->private_data;
+    // private points to an array, the first element points to sequence for reading
+    // the second element points to cache for writing
+    private[0] = p_seq_file->private;
+    private[1] = cache;
+    p_seq_file->private = private;
+
+    return ret;
+
+asgn_proc_open_release_cache:
+    if (NULL != cache) kfree(cache);
+
+asgn_proc_open_release_private: 
+    kfree(private);
+
+asgn_proc_open_return:
+    return ret;
+}
+
+static int asgn_proc_release(struct inode * inodep, struct file * filep) {
+    struct seq_file * p_seq_file = filep->private_data;
+    
+    void ** private = (void **) p_seq_file->private;
+    void * cache_for_writing = private[1];
+
+    int ret = seq_release(inodep, filep);
+
+    if (NULL != cache_for_writing) {
+        // parse and execute the command in cache before releasing it
+        char * max_param_prefix = "max_process_count=";
+        char *ptr;
+        int prefix_length = strlen(max_param_prefix);
+        if (strncmp(max_param_prefix, cache_for_writing, prefix_length) == 0) {
+            long max_count = simple_strtol(cache_for_writing + prefix_length, &ptr, 10);
+
+            if (max_count > 0) {
+                // change the maximum number of process to access the file concurrently
+                change_max_process(max_count);
+            } else {
+                D(D_NAME, "Invalid max_process_count, ignore it: %d", max_process_count);
+            }
+        }
+        kfree(cache_for_writing);
+    }
+    if (NULL != private) kfree(private);
+
+    return ret;
+}
+
+static ssize_t asgn_proc_write(struct file *filep, const char __user * buff, 
+        size_t size, loff_t *pos) {
+    if (*pos >= PROC_CACHE_SIZE || *pos < 0) return -EINVAL;
+
+    D(D_NAME, "Write %d bytes from buffer to cache: %s", size, buff); 
+
+    struct seq_file * p_seq_file = filep->private_data;
+    void *cache = ((void **)p_seq_file->private)[1];
+
+    size_t write_size = MIN(size, PROC_CACHE_SIZE - *pos);
+    D(D_NAME, "Expected writing size: %d, target writing address: 0x%p", write_size, cache);
+    int ret = copy_from_user(cache + (*pos), buff, write_size);
+    if (0 != ret) {
+        E(D_NAME, "Failed to copy data from user space: %d\n", ret);
+        return ret;
+    }
+    return write_size;
+}
+
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = device_open,
@@ -403,6 +616,14 @@ static struct file_operations fops = {
     .unlocked_ioctl = device_ioctl,
     .llseek = device_llseek,
     .mmap = device_mmap,
+};
+
+static struct proc_ops proc_entity_ops = {
+    .proc_open = asgn_proc_open,
+    .proc_lseek = seq_lseek,
+    .proc_read = seq_read,
+    .proc_release = asgn_proc_release,
+    .proc_write = asgn_proc_write,
 };
 
 static int allocate_major_number(dev_t *devno, int *major)
@@ -489,7 +710,17 @@ static int __init my_init(void)
     D(D_NAME, "create device successfully");
     I(D_NAME, "initialise successfully");
 
+    // create entry in folder /proc
+    device_data->proc_entry = proc_create(D_NAME, 0644, NULL, &proc_entity_ops);
+    if (IS_ERR(device_data->proc_entry)) {
+        ret = PTR_ERR(device_data->proc_entry);
+        E(D_NAME, "failed to create entry in '/proc': %d", ret);
+        goto error_with_device;
+    }
+
     return 0;
+error_with_device:
+    device_destroy(device_data->clazz, dev_no);
 
 error_with_class:
     class_destroy(device_data->clazz);
@@ -518,6 +749,7 @@ static void __exit my_exit(void)
         D(D_NAME, "Release a page successfully.");
     }
 
+    remove_proc_entry(D_NAME, NULL);
     dev_t dev_no = MKDEV(major, 0);    
     device_destroy(device_data->clazz, dev_no);
     class_destroy(device_data->clazz);
