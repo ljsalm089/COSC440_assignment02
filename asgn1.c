@@ -43,6 +43,7 @@ MODULE_PARM_DESC(major, "device major number");
 MODULE_AUTHOR("Jiasheng Li");
 MODULE_LICENSE("GPL");
 
+// define the structure to organise the data need to show in /proc/asign1
 typedef struct seq_node {
     struct seq_node * next;
     short type;
@@ -65,23 +66,34 @@ typedef struct mem_node {
 
 typedef MemNode * PMemNode;
 
+// define  structure to save the data about the device
 typedef struct dev_data {
     struct class *clazz;
     struct device *device;
     struct cdev dev;
 
+    // the created entry in /proce for device
+    // used to display some inner info like allocated pages addresses, value of variable max_process_count, etc.
     struct proc_dir_entry * proc_entry;
 
+    // semaphore for reading, writing and memory maping
     struct semaphore sema;
 
+    // linked list used to organise all allocated pages
     struct list_head mem_list;
+    // indicate the size of the character file
     ssize_t file_size;
 
+    // wait queue for those processes open the file as read-only or read-write
     wait_queue_head_t wait_queue;
+    // wait queue for thos processes open the file as write-only
     wait_queue_head_t write_only_wait_queue;
 
+    // count of processes accessing the file currently (read-only or read-write)
     int count;
+    // count of processes accessing the file currently (write-only)
     int write_only_count;
+    // spin lock to protect count and write_only_count
     spinlock_t count_lock;
 } DevData;
 typedef DevData * PDevData;
@@ -268,7 +280,7 @@ static loff_t device_llseek(struct file *filep, loff_t offset, int whence)
 
 static ssize_t device_read(struct file * filep, char * buff, size_t size, loff_t * offset)
 {
-    // in case the file is accessed from multiple threads
+    // in case the file is accessed from multiple processes/threads
     if (down_interruptible(&device_data->sema))
         return -ERESTARTSYS;
 
