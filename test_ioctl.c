@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
         if (0 == pid) {
             // child
             int ret = read_from_file(file_path);
-            if (20 == index || 60 == index) {
+            if (2 == index || 6 == index) {
                 int fd = open(file_path, O_RDWR);
                 if (fd < 0)
                     return ret;
