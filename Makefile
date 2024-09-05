@@ -1,8 +1,7 @@
+obj-m := asgn.o
 
-obj-m := asgn2.o
-
-asgn2-y := src/asgn2.o
-asgn2-y += src/circular_buffer.o
+asgn-y := src/asgn2.o 
+asgn-y += src/circular_buffer.o src/page_buffer.o
 
 ccflags-y := -I$(src)/include
 
@@ -10,7 +9,7 @@ KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 
 all:
-	$(MAKE) -C $(KDIR) M=$(PWD)
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean

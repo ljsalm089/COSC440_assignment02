@@ -1,6 +1,7 @@
 # include <linux/slab.h> // for `kmalloc`
 # include <linux/gfp.h>  // for `get_zeroed_page`
 # include <linux/string.h> // for operations of string 
+# include <linux/uaccess.h> // for `copy_from_user` and `copy_to_user`
 
 
 # include "common.h"
@@ -31,13 +32,13 @@ typedef struct {
 
 typedef _PBuffer * _PPBuffer;
 
-static _PPBuffer _convert_pbuffer(PPBuffer b)
+_PPBuffer _convert_pbuffer(PPBuffer b)
 {
-    _PPBuffer b = (_PPBuffer)((char *) b - offsetof(_PBuffer, inner));
-    return b;
+    _PPBuffer pb = (_PPBuffer)((char *) b - offsetof(_PBuffer, inner));
+    return pb;
 }
 
-static void _release_page_node(PPageNode n)
+void _release_page_node(PPageNode n)
 {
     if (n) {
         if (n->page) free_page((unsigned long) n->page);
@@ -46,7 +47,7 @@ static void _release_page_node(PPageNode n)
     }
 }
 
-static void _create_new_page_node()
+PPageNode _create_new_page_node(void)
 {
     PPageNode node = (PPageNode) kmalloc(sizeof(PageNode), GFP_KERNEL);
     if (IS_ERR(node)) {
@@ -68,7 +69,7 @@ static void _create_new_page_node()
     return node;
 }
 
-static PPBuffer create_new_pbuffer()
+PPBuffer create_new_pbuffer()
 {
     _PPBuffer p = (_PPBuffer) kmalloc (sizeof(_PBuffer), GFP_KERNEL);
     if (IS_ERR(p)) {
@@ -82,7 +83,7 @@ static PPBuffer create_new_pbuffer()
     return &p->inner;
 }
 
-static size_t pbuffer_size(PBuffer p) 
+size_t pbuffer_size(PPBuffer p) 
 {
     CONVERT(buff, p);
 
@@ -101,15 +102,21 @@ static size_t pbuffer_size(PBuffer p)
     return size;
 }
 
-static size_t _write_into_page_node(PPageNode node, char * buff, size_t expected_size)
+size_t _write_into_page_node(PPageNode node, char * buff, size_t expected_size, int kernel)
 {
     int write_size = MIN(expected_size, NODE_AVAILABLE_SIZE(node));
-    memcpy(NODE_END_POS(node), buff, write_size);
+    if (kernel) {
+        memcpy(NODE_END_POS(node), buff, write_size);
+    } else {
+        if (copy_from_user(NODE_END_POS(node), buff, write_size)) {
+            return FAIL;
+        }
+    }
     node->end_pos += write_size;
     return write_size;
 }
 
-static size_t write_into_pbuffer(PPBuffer p, char * buff, size_t size)
+size_t _write_into_pbuffer_generic(PPBuffer p, char * buff, size_t size, int kernel)
 {
     CONVERT(pb, p);
 
@@ -129,22 +136,35 @@ static size_t write_into_pbuffer(PPBuffer p, char * buff, size_t size)
             node = list_last_entry(&pb->pages, PageNode, node);
         }
  
-        already_write_size += _write_into_page_node(node, 
-                buff + already_write_size, size - already_write_size);
+        size_t write_size = _write_into_page_node(node, 
+                buff + already_write_size, size - already_write_size, kernel);
+        if (write_size == FAIL) {
+            if (0 == already_write_size) {
+                already_write_size = FAIL;
+            }
+            break;
+        }
+        already_write_size += write_size;
     }
 
     return already_write_size;
 }
 
-static size_t _read_from_page_node(PPageNode node, char * buff, size_t expected_size)
+size_t _read_from_page_node(PPageNode node, char * buff, size_t expected_size, int kernel)
 {
     int read_size = MIN(expected_size, NODE_SIZE(node));
-    memcpy(buff, NODE_START_POS(node), read_size);
+    if (kernel) {
+        memcpy(buff, NODE_START_POS(node), read_size);
+    } else {
+        if(copy_to_user(buff, NODE_START_POS(node), read_size)) {
+            return FAIL;
+        }
+    }
     node->start_pos += read_size;
     return read_size;
 }
 
-static size_t read_from_pbuffer(PPBuffer p, char * buff, size_t size)
+size_t _read_from_pbuffer_generic(PPBuffer p, char * buff, size_t size, int kernel)
 {
     CONVERT(pb, p);
 
@@ -160,9 +180,17 @@ static size_t read_from_pbuffer(PPBuffer p, char * buff, size_t size)
             node = list_first_entry(&pb->pages, PageNode, node);
         }
         
-        already_read_size += _read_from_page_node(node, buff + already_read_size,
-                size - already_read_size);
+        size_t read_size = _read_from_page_node(node, buff + already_read_size,
+                size - already_read_size, kernel);
 
+        if (read_size == FAIL) {
+            if (already_read_size == 0) {
+                already_read_size = FAIL;
+            }
+            break;
+        }
+
+        already_read_size += read_size;
         if (NODE_SIZE(node) == 0 && NODE_IS_FULL(node)) {
             list_del(&node->node);
         }
@@ -171,17 +199,37 @@ static size_t read_from_pbuffer(PPBuffer p, char * buff, size_t size)
     return already_read_size;
 }
 
-static size_t _simple_char_index(void * buff, size_t size, void *arg)
+size_t write_into_pbuffer(PPBuffer p, char * buff, size_t size)
+{
+    return _write_into_pbuffer_generic(p, buff, size, 1);
+}
+
+size_t read_from_pbuffer(PPBuffer p, char * buff, size_t size)
+{
+    return _read_from_pbuffer_generic(p, buff, size, 1);
+}
+
+size_t write_into_pbuffer_from_user(PPBuffer p, char __user * buff, size_t size)
+{
+    return _write_into_pbuffer_generic(p, buff, size, 0);
+}
+
+size_t read_from_pbuffer_into_user(PPBuffer p, char __user * buff, size_t size)
+{
+    return _read_from_pbuffer_generic(p, buff, size, 0);
+}
+
+size_t _simple_char_index(void * buff, size_t size, void *arg)
 {
     char target = * ((char *) arg);
-    char * result = strnchar(buff, size, target); 
+    char * result = strnchr(buff, size, target); 
     if (!result) {
         return -1;
     }
-    return result - buff;
+    return result - (char *) buff;
 }
 
-static size_t find_in_pbuffer_in_range(PPBuffer p, size_t end, 
+size_t find_in_pbuffer_in_range(PPBuffer p, size_t end, 
         size_t (*index) (void *, size_t, void *), void *args)
 {
     size_t target_pos = -1;
@@ -215,7 +263,7 @@ static size_t find_in_pbuffer_in_range(PPBuffer p, size_t end,
     return target_pos;
 }
 
-static size_t find_in_pbuffer(PPBuffer p, size_t start_pos, 
+size_t find_in_pbuffer(PPBuffer p, size_t start_pos, 
         size_t (*index) (void *, size_t, void *), void *args)
 {
     size_t target_pos = -1;
@@ -260,15 +308,16 @@ static size_t find_in_pbuffer(PPBuffer p, size_t start_pos,
     return target_pos;
 }
 
-static void release_pbuffer(PPBuffer p)
+void release_pbuffer(PPBuffer p)
 {
-    while (!list_empty(&p->pages)) {
-        PPageNode node = list_first_entry_or_null(&p->pages, PageNode, node);
+    CONVERT(pb, p);
+    while (!list_empty(&pb->pages)) {
+        PPageNode node = list_first_entry_or_null(&pb->pages, PageNode, node);
         if (node) {
             list_del(&node->node);
             _release_page_node(node);
         }
     }
 
-    kfree(p);
+    kfree(pb);
 }

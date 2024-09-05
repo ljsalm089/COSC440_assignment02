@@ -22,10 +22,7 @@
 #define TAG "asgn2"
 #define C_NAME "assignment_class"
 
-#define PROC_CACHE_SIZE 100
-#define SEQ_TYPE_MAXIMUM 0x01
-#define SEQ_TYPE_TIPS 0x02
-#define SEQ_TYPE_PAGE 0x03
+#define C_BUFFER_SIZE 10
 
 static int major = 0;
 module_param(major, int, S_IRUGO);
@@ -50,11 +47,21 @@ typedef struct {
     // wait queue for those processes open the file as read-only or read-write
     wait_queue_head_t wait_queue;
 
+    // wait queue for those processes try to read but there is no data in the buffer
+    wait_queue_head_t read_queue;
+
     // spin lock to protect count and write_only_count
     spinlock_t lock;
 
     // current using process id
     pid_t current_pid;
+
+    // page buffer which the user applications read from
+    PPBuffer p_buff;
+
+    // circular buffer which interrupt handler read data into
+    // and tasklet read data from
+    PCBuffer c_buff;
 } DevData;
 typedef DevData * PDevData;
 
@@ -88,7 +95,7 @@ static int device_open(struct inode *node, struct file *filep)
         if (should_wait) {
             D(TAG, "Process(%d) hasn't been granted the resource, keep waiting", pid);
             wait_event_interruptible_exclusive(d_data->wait_queue, 
-                    d_data->current_pid) == -1;
+                    d_data->current_pid == -1);
             D(TAG, "Process(%d) is awake, check what happen", pid);
             if (signal_pending(current)) {
                 D(TAG, "Process(%d) had received an signal, abort the open process", pid);
@@ -114,18 +121,43 @@ static int device_release(struct inode *node, struct file *filep)
     return 0;
 }
 
-static ssize_t device_read(struct file * filep, char * buff, size_t size, loff_t * offset)
+static ssize_t device_read(struct file * filep, char __user * buff, size_t size, loff_t * offset)
 {
     // in case the file is accessed from multiple processes/threads
     if (down_interruptible(&d_data->sema))
         return -ERESTARTSYS;
 
-    PDevData p = d_data;
     size_t already_read_size = 0;
+    if (0 >= size) goto release;
 
-    D(D_NAME, "Process(%d) start to read %d bytes from the file\n", currentpid, size);
+    PDevData p = d_data;
+    PPBuffer pbuffer = d_data->p_buff;
 
-    // TODO need to read data from page buffer
+    int ready_size = 0;
+    char edge = '\0';
+    while (ready_size == 0) {
+        // keep going only if there is some data in the buffer, or just keep waiting
+        wait_event_interruptible_exclusive(p->read_queue, pbuffer_size(pbuffer) > 0);
+
+        if (signal_pending(current)) {
+            D(TAG, "Process(%d) received singal while waiting for data to read", currentpid);
+            already_read_size = -ERESTARTSYS;
+            goto release;
+        }
+
+        ready_size = MIN(pbuffer_size(pbuffer), size);
+        D(TAG, "There are %d bytes of data in the buffer for read", ready_size);
+    }
+    size_t edge_pos = find_in_pbuffer_in_range(pbuffer, ready_size, NULL, &edge);
+    if (edge_pos > 0) {
+        D(TAG, "There is an edge indicator in the buffer, its position is %d", edge_pos);
+        ready_size = MIN(edge_pos, ready_size);
+    }
+
+    D(D_NAME, "Process(%d) start to read %d bytes from the file\n", currentpid, ready_size);
+
+    // need to read data from page buffer
+    already_read_size = read_from_pbuffer_into_user(pbuffer, buff, already_size);
 
 release:
     up(&d_data->sema);
@@ -185,6 +217,7 @@ static int __init asgn2_init(void)
     memset(d_data, 0, sizeof(DevData));
     d_data->current_pid = -1;
     init_waitqueue_head(&d_data->wait_queue);
+    init_waitqueue_head(&d_data->read_queue);
 
     // initialise the semaphore
     sema_init(&d_data->sema, 1);
@@ -221,7 +254,26 @@ static int __init asgn2_init(void)
     D(D_NAME, "create device successfully");
     I(D_NAME, "initialise successfully");
 
+    d_data->p_buff = create_new_pbuffer();
+    if (!d_data->p_buff) {
+        E(TAG, "Unable to create page buffer");
+        goto error_with_device;
+    }
+
+    d_data->c_buff = create_new_cbuffer(C_BUFFER_SIZE);
+    if (!d_data->c_buff) {
+        E(TAG, "Unable to create circular buffer");
+        goto error_with_pbuffer;
+    }
+
     return 0;
+
+error_with_pbuffer:
+    release_pbuffer(d_data->p_buff);
+
+error_with_device:
+    device_destroy(d_data->clazz, dev_no);
+
 error_with_class:
     class_destroy(d_data->clazz);
 
@@ -240,6 +292,8 @@ static void __exit asgn2_exit(void)
 {
     I(D_NAME, "Byte, module unloaded at 0x%p\n", asgn2_exit);
 
+    release_cbuffer(d_data->c_buff);
+    release_pbuffer(d_data->p_buff);
     dev_t dev_no = MKDEV(major, 0);    
     device_destroy(d_data->clazz, dev_no);
     class_destroy(d_data->clazz);

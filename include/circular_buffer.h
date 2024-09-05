@@ -10,20 +10,20 @@ typedef struct {
 
 typedef CBuffer* PCBuffer;
 
-static PCBuffer create_new_cbuffer (size_t size);
+PCBuffer create_new_cbuffer (size_t size);
 
-static PCBuffer init_new_cbuffer(void * p, size_t mem_size);
+PCBuffer init_new_cbuffer(void * p, size_t mem_size);
 
-static void release_cbuffer(PCBuffer cbuff);
+void release_cbuffer(PCBuffer cbuff);
 
-static size_t cbuffer_size(PCBuffer cbuff);
+size_t cbuffer_size(PCBuffer cbuff);
 
-static size_t cbuffer_available_size(PCBuffer cbuff);
+size_t cbuffer_available_size(PCBuffer cbuff);
 
-static void release_cbuffer(PCBuffer cbuff);
+void release_cbuffer(PCBuffer cbuff);
 
-static size_t write_into_cbuffer(PCBuffer cbuff, char * buff, size_t size);
+size_t write_into_cbuffer(PCBuffer cbuff, char * buff, size_t size);
 
-static size_t read_from_cbuffer(PCBuffer cbuff, char * buff, size_t size);
+size_t read_from_cbuffer(PCBuffer cbuff, char * buff, size_t size);
 
 #endif // __cbuffer_H__

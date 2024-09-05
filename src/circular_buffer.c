@@ -22,13 +22,13 @@ typedef struct {
 
 typedef _CBuffer * _PCBuffer;
 
-static inline _PCBuffer _convert_cbuffer (PCBuffer buff)
+inline _PCBuffer _convert_cbuffer (PCBuffer buff)
 {
     _PCBuffer b = (_PCBuffer) ((char *) buff - offsetof(_CBuffer, inner));
     return b;
 }
 
-static PCBuffer create_new_cbuffer (size_t size) 
+PCBuffer create_new_cbuffer (size_t size) 
 {
     size_t allocated_size = size + EXTRA_SIZE;
     _PCBuffer buff = (_PCBuffer) kmalloc(allocated_size, GFP_KERNEL);
@@ -40,7 +40,7 @@ static PCBuffer create_new_cbuffer (size_t size)
     return init_new_cbuffer(buff, allocated_size);
 }
 
-static PCBuffer init_new_cbuffer(void * p, size_t mem_size) 
+PCBuffer init_new_cbuffer(void * p, size_t mem_size) 
 {
     size_t size = mem_size - EXTRA_SIZE;
     if (size <= 0) {
@@ -53,7 +53,7 @@ static PCBuffer init_new_cbuffer(void * p, size_t mem_size)
     return &buff->inner;
 }
 
-static void release_cbuffer(PCBuffer cbuff)
+void release_cbuffer(PCBuffer cbuff)
 {
     if (cbuff) {
         CONVERT(buff, cbuff);
@@ -61,12 +61,12 @@ static void release_cbuffer(PCBuffer cbuff)
     }
 }
 
-static size_t _buff_size (_PCBuffer buff) 
+size_t _buff_size (_PCBuffer buff) 
 {
     return buff->w_pos - buff->r_pos;
 }
 
-static void _adjust_pos(_PCBuffer buff)
+void _adjust_pos(_PCBuffer buff)
 {
     size_t total_size = buff->total_size;
     while (buff->w_pos > total_size && buff->r_pos > total_size) {
@@ -75,13 +75,13 @@ static void _adjust_pos(_PCBuffer buff)
     }
 }
 
-static size_t cbuffer_size(PCBuffer cbuff) 
+size_t cbuffer_size(PCBuffer cbuff) 
 {
     CONVERT(buff, cbuff);
     return _buff_size(buff);
 }
 
-static size_t cbuffer_available_size(PCBuffer cbuff) 
+size_t cbuffer_available_size(PCBuffer cbuff) 
 {
     CONVERT(buff, cbuff);
     return buff->total_size - cbuffer_size(cbuff);
