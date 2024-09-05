@@ -19,6 +19,7 @@ int max_process = 10;
 int read_from_file(char *file_path) {
     char buff[1024];
     int fd = open(file_path, O_RDONLY);
+    int fd_s = open(file_path, O_RDONLY);
     pid_t pid = getpid();
     extern int errno;
 
@@ -26,6 +27,17 @@ int read_from_file(char *file_path) {
         DEBUG(TAG, "Unable to open file in process (%d): %s", pid, strerror(errno));
         return 1;
     }
+
+    if (fd_s == -1) {
+        DEBUG(TAG, "Unable to open the file twice");
+        return 1;
+    }
+    if (fd == fd_s) {
+        INFO(TAG, "The fds of the opened file are same");
+    } else {
+        INFO(TAG, "The fds of the opened file are not same");
+    }
+    exit(1);
 
     DEBUG(TAG, "Open file success in process: %d", pid);
 

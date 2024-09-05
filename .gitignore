@@ -8,3 +8,4 @@
 *.symvers
 *.ko
 *.order
+test_ioctl
