@@ -24,4 +24,16 @@
        
 #define currentpid current->pid
 
+#define MIN(l, r) (l) < (r) ? (l) : (r)
+#define MAX(l, r) (l) > (r) ? (l) : (r)
+
+#define SUCC 0
+#define FAIL -1
+
+# include <linux/list.h>
+
+typedef struct list_head ListHead;
+typedef ListHead * PListHead;
+
+
 #endif // __COMMON_H__
