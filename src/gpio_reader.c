@@ -154,6 +154,8 @@ e_with_reader:
 
 void release_gpio_reader(PGPIOReader reader)
 {
+    if (NULL == reader) return;
+
     CONVERT(r, reader);
     gpio_free_array(gpio_pins, ARRAY_SIZE(gpio_pins));
     iounmap((void *) r->gpio_base);

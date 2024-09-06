@@ -354,18 +354,21 @@ static int __init asgn2_init(void)
 
     d_data->p_buff = create_new_pbuffer();
     if (!d_data->p_buff) {
+        ret = -EINVAL;
         E(TAG, "Unable to create page buffer");
         goto error_with_device;
     }
 
     d_data->c_buff = create_new_cbuffer(C_BUFFER_SIZE);
     if (!d_data->c_buff) {
+        ret = -EINVAL;
         E(TAG, "Unable to create circular buffer");
         goto error_with_pbuffer;
     }
 
     d_data->reader = create_new_gpio_reader(read_trigger);
     if (!d_data->reader) {
+        ret = -EINVAL;
         E(TAG, "Unable to create gpio reader");
         goto error_with_cbuffer;
     }
