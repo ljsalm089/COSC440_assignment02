@@ -1,7 +1,7 @@
 obj-m := asgn.o
 
 asgn-y := src/asgn2.o 
-asgn-y += src/circular_buffer.o src/page_buffer.o
+asgn-y += src/circular_buffer.o src/page_buffer.o src/gpio_reader.o
 
 ccflags-y := -I$(src)/include
 
