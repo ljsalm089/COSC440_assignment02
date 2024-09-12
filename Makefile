@@ -1,7 +1,7 @@
 obj-m := asgn.o # gpio.o
 
 asgn-y := src/asgn2.o 
-asgn-y += src/circular_buffer.o src/page_buffer.o src/gpio_reader.o
+asgn-y += src/circular_buffer.o src/page_buffer.o src/gpio_reader.o src/mem_cache.o
 
 
 ccflags-y := -I$(src)/include

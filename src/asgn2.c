@@ -19,6 +19,7 @@
 # include "circular_buffer.h"
 # include "page_buffer.h"
 # include "gpio_reader.h"
+# include "mem_cache.h"
 
 #define D_NAME "asgn2"
 #define TAG "asgn2"
@@ -356,9 +357,10 @@ static int __init asgn2_init(void)
     if (ret < 0) return ret; 
 
     D(D_NAME, "registered correctly with major number: %d", major);
+    init_mem_cache();
 
     // allocate memory to store data
-    d_data = kmalloc(sizeof(DevData), GFP_KERNEL);
+    d_data = (PDevData) alloc_mem(sizeof(DevData), 0);
     if (!d_data) {
         ret = -ENOMEM;
         E(D_NAME, "failed to allocate memory to store data");
@@ -426,6 +428,7 @@ static int __init asgn2_init(void)
         goto error_with_cbuffer;
     }
     tasklet_init(&d_data->cbuffer_tasklet, migration_tasklet, 0);
+    
 
     return 0;
 
@@ -449,6 +452,8 @@ error_with_data:
 
 error_with_major:
     release_major_number(dev_no);
+
+    release_mem_cache();
     return ret;
 }
 
@@ -464,8 +469,9 @@ static void __exit asgn2_exit(void)
     device_destroy(d_data->clazz, dev_no);
     class_destroy(d_data->clazz);
     cdev_del(&d_data->dev);
-    kfree(d_data);
+    release_mem((void *) d_data, 0);
     release_major_number(dev_no);
+    release_mem_cache();
 }
 
 module_init(asgn2_init);
