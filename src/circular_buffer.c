@@ -89,32 +89,39 @@ size_t cbuffer_available_size(PCBuffer cbuff)
 
 size_t write_into_cbuffer(PCBuffer cbuff, char * buff, size_t size)
 {
+    // D(TAG, "Try to write %d bytes data into the buffer", size);
     size_t available_size = cbuffer_available_size(cbuff);
     size_t target_write_size = size;
     if (size > available_size) {
+        D(TAG, "Exceed the available size, only write %d bytes", available_size);
         target_write_size = available_size;
     }
     size_t already_write_size = 0;
     
     CONVERT(pb, cbuff);
 
-    while (W_POS(pb) + (target_write_size - already_write_size) > pb->total_size) {
+    int need_next_round = 0;
+    do {
+        need_next_round = W_POS(pb) + (target_write_size - already_write_size) > pb->total_size;
         size_t write_size = MIN(target_write_size - already_write_size, 
                 pb->total_size - W_POS(pb));
         memcpy(pb->buffer + W_POS(pb), buff + already_write_size, write_size);
         pb->w_pos += write_size;
         already_write_size += write_size;
-    }
+    } while (need_next_round);
 
     _adjust_pos(pb);
+    // D(TAG, "Successfully wrote %d bytes data into the buffer", already_write_size);
     return already_write_size;
 }
 
 size_t read_from_cbuffer(PCBuffer cbuff, char * buff, size_t size)
 {
+    D(TAG, "Try to read %d bytes data from the buffer", size);
     size_t buffer_size = cbuffer_size(cbuff);
     size_t target_read_size = size;
     if (size > buffer_size) {
+        D(TAG, "Only %d bytes data in the buffer for reading", buffer_size);
         target_read_size = buffer_size;
     }
 
@@ -122,14 +129,17 @@ size_t read_from_cbuffer(PCBuffer cbuff, char * buff, size_t size)
 
     CONVERT(pb, cbuff);
 
-    while (R_POS(pb) + (target_read_size - already_read_size) > pb->total_size) {
+    int need_next_round = 0;
+    do {
+        need_next_round = R_POS(pb) + (target_read_size - already_read_size) > pb->total_size;
         size_t read_size = MIN(target_read_size - already_read_size, 
                 pb->total_size - R_POS(pb));
         memcpy(buff + already_read_size, pb->buffer + R_POS(pb), read_size);
         pb->r_pos += read_size;
         already_read_size += read_size;
-    }
+    } while (need_next_round);
 
     _adjust_pos(pb);
+    D(TAG, "Successfully read %d bytes data from the buffer", already_read_size);
     return already_read_size;
 }

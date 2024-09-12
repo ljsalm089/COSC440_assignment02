@@ -39,16 +39,16 @@ static u32 gpio_dummy_base;
 
 /* Define GPIO pins for the dummy device */
 static struct gpio gpio_dummy[] = {
-                { 7, GPIOF_IN, "GPIO7" },
-                { 8, GPIOF_OUT_INIT_HIGH, "GPIO8" },
-                { 17, GPIOF_IN, "GPIO17" },
-                { 18, GPIOF_OUT_INIT_HIGH, "GPIO18" },
-                { 22, GPIOF_IN, "GPIO22" },
-                { 23, GPIOF_OUT_INIT_HIGH, "GPIO23" },
-                { 24, GPIOF_IN, "GPIO24" },
-                { 25, GPIOF_OUT_INIT_HIGH, "GPIO25" },
-                { 4, GPIOF_OUT_INIT_LOW, "GPIO4" },
-                { 27, GPIOF_IN, "GPIO27" },
+                { 519, GPIOF_IN, "GPIO7" },
+                { 520, GPIOF_OUT_INIT_HIGH, "GPIO8" },
+                { 529, GPIOF_IN, "GPIO17" },
+                { 530, GPIOF_OUT_INIT_HIGH, "GPIO18" },
+                { 534, GPIOF_IN, "GPIO22" },
+                { 535, GPIOF_OUT_INIT_HIGH, "GPIO23" },
+                { 536, GPIOF_IN, "GPIO24" },
+                { 537, GPIOF_OUT_INIT_HIGH, "GPIO25" },
+                { 516, GPIOF_OUT_INIT_LOW, "GPIO4" },
+                { 539, GPIOF_IN, "GPIO27" },
 };
 
 static int dummy_irq;
@@ -138,19 +138,19 @@ int gpio_dummy_init(void)
     gpio_dummy_base = (u32)ioremap(BCM2835_PERI_BASE + 0x200000, 4096);
     printk(KERN_INFO "The gpio base is mapped to %x\n", gpio_dummy_base);
     // ret = gpio_request_array(gpio_dummy, ARRAY_SIZE(gpio_dummy));
-    for (int index = 0; index < ARRAY_SIZE(gpio_dummy); index ++) {
-        struct gpio tmp = gpio_dummy[index];
-        ret = gpio_request_one(tmp.gpio, tmp.flags, tmp.label);
-        if (ret) {
-            printk(KERN_ERR "Unable to request GPIOs for the dummy device: %d, %d", ret, tmp.gpio);
-            goto fail1;
-        }
-    }
+    // for (int index = 0; index < ARRAY_SIZE(gpio_dummy); index ++) {
+   //      struct gpio tmp = gpio_dummy[index];
+        // ret = gpio_request_one(tmp.gpio, tmp.flags, tmp.label);
+        // if (ret) {
+            // printk(KERN_ERR "Unable to request GPIOs for the dummy device: %d, %d", ret, tmp.gpio);
+        // }
+    // }
 
+    ret = gpio_request_array(gpio_dummy, ARRAY_SIZE(gpio_dummy));
     if (ret) {
-	printk(KERN_ERR "Unable to request GPIOs for the dummy device: %d, %d", ret, ENOSYS);
-	return ret;
-        }
+	    printk(KERN_ERR "Unable to request GPIOs for the dummy device: %d, %d", ret, ENOSYS);
+	    goto fail1;
+    }
     ret = gpio_to_irq(gpio_dummy[ARRAY_SIZE(gpio_dummy)-1].gpio);
     if(ret < 0) {
 	printk(KERN_ERR "Unable to request IRQ for gpio %d: %d\n", gpio_dummy[ARRAY_SIZE(gpio_dummy)-1].gpio, ret);
@@ -169,6 +169,7 @@ int gpio_dummy_init(void)
 return 0;
 
 fail1:
+    printk(KERN_ERR "Make sure last log can be view in `dmesg`");
     gpio_free_array(gpio_dummy, ARRAY_SIZE(gpio_dummy));
     iounmap((void *)gpio_dummy_base);
     return ret;

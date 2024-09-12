@@ -29,17 +29,16 @@ typedef struct {
 } _GReader;
 
 struct gpio gpio_pins[] = {
-    { 7, GPIOF_IN, "GPIO7" },
-    { 8, GPIOF_OUT_INIT_HIGH, "GPIO8" },
-    { 17, GPIOF_IN, "GPIO17" },
-    { 18, GPIOF_OUT_INIT_HIGH, "GPIO18" },
-    { 22, GPIOF_IN, "GPIO22" },
-    { 23, GPIOF_OUT_INIT_HIGH, "GPIO23" },
-    { 24, GPIOF_IN, "GPIO24" },
-    { 25, GPIOF_OUT_INIT_HIGH, "GPIO25" },
-    { 4, GPIOF_OUT_INIT_LOW, "GPIO4" },
-    { 27, GPIOF_IN, "GPIO27" },
-
+                { 519, GPIOF_IN, "GPIO7" },
+                { 520, GPIOF_OUT_INIT_HIGH, "GPIO8" },
+                { 529, GPIOF_IN, "GPIO17" },
+                { 530, GPIOF_OUT_INIT_HIGH, "GPIO18" },
+                { 534, GPIOF_IN, "GPIO22" },
+                { 535, GPIOF_OUT_INIT_HIGH, "GPIO23" },
+                { 536, GPIOF_IN, "GPIO24" },
+                { 537, GPIOF_OUT_INIT_HIGH, "GPIO25" },
+                { 516, GPIOF_OUT_INIT_LOW, "GPIO4" },
+                { 539, GPIOF_IN, "GPIO27" },
 };
 
 typedef _GReader * PGReader;
@@ -157,6 +156,8 @@ void release_gpio_reader(PGPIOReader reader)
     if (NULL == reader) return;
 
     CONVERT(r, reader);
+    _write_to_gpio(r->gpio_base, 1);
+    free_irq(reader->irq_num, NULL);
     gpio_free_array(gpio_pins, ARRAY_SIZE(gpio_pins));
     iounmap((void *) r->gpio_base);
     kfree(r);

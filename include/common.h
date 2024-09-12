@@ -12,6 +12,8 @@
 #define A(t_, fmt, ...) printk(KERN_ALERT "%s: " fmt, t_, ##__VA_ARGS__)
 #define E(t_, fmt, ...) printk(KERN_ERR "%s: " fmt, t_, ##__VA_ARGS__)
 
+#define DEBUG_BLOCK(x) x
+
 #else
 
 #define D(T_, fmt, ...) 
@@ -19,6 +21,8 @@
 #define W(t_, fmt, ...) printk(KERN_WARNING fmt, ##__VA_ARGS__)
 #define A(t_, fmt, ...) printk(KERN_ALERT fmt, ##__VA_ARGS__)
 #define E(t_, fmt, ...) printk(KERN_ERR fmt, ##__VA_ARGS__)
+
+#define DEBUG_BLOCK(x)
 
 #endif // DEBUG
        

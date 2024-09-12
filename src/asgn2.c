@@ -24,7 +24,9 @@
 #define TAG "asgn2"
 #define C_NAME "assignment_class"
 
-#define C_BUFFER_SIZE 10
+#define C_BUFFER_SIZE 30
+
+static const char DELIMITER = '\0';
 
 static int major = 0;
 module_param(major, int, S_IRUGO);
@@ -54,18 +56,27 @@ typedef struct {
     // current using process id
     pid_t current_pid;
 
+
     // page buffer which the user applications read from
     PPBuffer p_buff;
     // used to synchronise between tasklet and reading process
     spinlock_t pbuff_lock;
+
+    // page buffer which is used to store the positions of the delimiter,
+    // the number of the delimiter is unpredictable,
+    // so use unlimited size buffer to save the positions
+    PPBuffer p_buff_possitions;
+    // count the number of characters that transfer into the page buffer, reset after there is a delimiter
+    size_t char_counter;
+
+    // if there are some process waiting to read
+    atomic_t waiting_for_read;
 
     // circular buffer which interrupt handler read data into
     // and tasklet read data from
     PCBuffer c_buff;
     // used to synchronise between interrupt and tasklet
     spinlock_t cbuff_lock;
-    // if there are some process waiting to read
-    atomic_t waiting_for_read;
 
     // encapsulate the operations of gpio, used to read data from gpio
     PGPIOReader reader;
@@ -104,6 +115,7 @@ static void migration_tasklet(unsigned long data)
                 "buffer to page buffer: %d", ret);
         return;
     }
+    D(TAG, "The tasklet has been triggered");
 
     unsigned long flags, plock_flags;
     size_t read_size = 0;
@@ -117,9 +129,27 @@ static void migration_tasklet(unsigned long data)
         }
         spin_unlock_irqrestore(&d_data->cbuff_lock, flags);
 
+        int data_size = read_size;
+        int delimiter_pos = simple_char_idnex(buff, data_size, (void *) &DELIMITER);
+        while (delimiter_pos >=0) {
+            d_data->char_encounter += delimiter_pos;
+            write_into_pbuffer(d_data->p_buff_possitions, &d_data->char_encounter, sizeof(d_data->char_encounter));
+            d_data->char_encounter = 0;
+
+            data_size -= delimiter + 1;
+            if (data_size > 0) {
+                delimiter_pos = simple_char_index(buff + delimiter_pos + 1, (void *) &DELIMITER);
+            } else {
+                break;
+            }
+        }
+
         write_into_pbuffer(d_data->p_buff, tmpbuffer, read_size);
+
+        D(TAG, "Migrated %d bytes into the page buffer", read_size);
         total_size += read_size;
     } while (read_size == buff_size);
+    D(TAG, "Migrated %d bytes into the page buffer", total_size);
 
     if (total_size > 0) {
         atomic_set(&d_data->waiting_for_read, 0);
@@ -143,10 +173,14 @@ static irqreturn_t read_trigger(int req, void *dev_id)
         spin_lock_irqsave(&d_data->cbuff_lock, flags);
         write_into_cbuffer(d_data->c_buff, &r, 1);
         if (cbuffer_size(d_data->c_buff) > cbuffer_available_size(d_data->c_buff) 
-                || r == '\0') {
+                || r == DELIMITER) {
             if (!d_data->tasklet_running) {
+                D(TAG, "The tasklet is not running, trigger to migrate data in circular buffer to page buffer");
                 d_data->tasklet_running = 1;
                 tasklet_schedule(&d_data->cbuffer_tasklet);
+            }
+            if (r == DELIMITER) {
+                D(TAG, "Read a delimiter into the circular bufffer");
             }
         }
         spin_unlock_irqrestore(&d_data->cbuff_lock, flags);
@@ -190,6 +224,15 @@ static int device_open(struct inode *node, struct file *filep)
     
 static int device_release(struct inode *node, struct file *filep)
 {
+    spin_lock(&d_data->pbuff_lock);
+    size_t range = MIN(2, pbuffer_size(d_data->p_buff));
+    size_t delimiter_pos = find_in_pbuffer_in_range(d_data->p_buff, range, NULL, (void *) &DELIMITER);
+    if (0 == delimiter_pos) {
+        char tmp = '\0';
+        // strip the delimiter if it is the first character in the buffer
+        read_from_pbuffer(d_data->p_buff, &tmp, 1);
+    }
+    spin_unlock(&d_data->pbuff_lock);
     D(D_NAME, "Process(%d) close the device", currentpid);
     spin_lock(&d_data->lock);
     d_data->current_pid = -1;
@@ -203,6 +246,7 @@ static int device_release(struct inode *node, struct file *filep)
 static ssize_t device_read(struct file * filep, char __user * buff, 
         size_t size, loff_t * offset)
 {
+    D(TAG, "Process(%d) try to read %d bytes data from device", currentpid, size);
     // in case the file is accessed from multiple processes/threads
     if (down_interruptible(&d_data->sema))
         return -ERESTARTSYS;
@@ -214,9 +258,9 @@ static ssize_t device_read(struct file * filep, char __user * buff,
     PPBuffer pbuffer = d_data->p_buff;
 
     int ready_size = 0;
-    char edge = '\0';
 
 
+    // keep waiting until there is some data in the buffer
     while (ready_size == 0) {
         // lock
         spin_lock(&d_data->pbuff_lock);
@@ -238,13 +282,13 @@ static ssize_t device_read(struct file * filep, char __user * buff,
             break;
         }
     }
-    // keep going only if there is some data in the buffer, or just keep waiting
+    // keep going, as there is some data in the buffer
     D(TAG, "There are %d bytes of data in the buffer for read", ready_size);
 
-    size_t edge_pos = find_in_pbuffer_in_range(pbuffer, ready_size, NULL, &edge);
-    if (edge_pos >= 0) {
-        D(TAG, "There is an edge indicator in the buffer, its position is %d", edge_pos);
-        ready_size = MIN(edge_pos, ready_size);
+    size_t delimiter_pos = find_in_pbuffer_in_range(pbuffer, ready_size + 1, NULL, (void *) &DELIMITER);
+    if (delimiter_pos >= 0) {
+        D(TAG, "There is an delimiter in the buffer, its position is %d", delimiter_pos);
+        ready_size = MIN(delimiter_pos, ready_size);
     }
 
     D(D_NAME, "Process(%d) start to read %d bytes from the file\n", currentpid, ready_size);
@@ -253,19 +297,28 @@ static ssize_t device_read(struct file * filep, char __user * buff,
         // need to read data from page buffer
         already_read_size = read_from_pbuffer_into_user(pbuffer, buff, ready_size);
     }
-
+    
     // unlock
     spin_unlock(&d_data->pbuff_lock);
+
+    *offset += already_read_size;
+
 release:
     up(&d_data->sema);
 
     return already_read_size;
 }
 
+static loff_t device_llseek(struct file *filep, loff_t offset, int whence)
+{
+    return -EINVAL;
+}
+
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = device_open,
     .read = device_read,
+    .llseek = device_llseek,
     .release = device_release,
 };
 

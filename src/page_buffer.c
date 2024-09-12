@@ -209,6 +209,29 @@ size_t read_from_pbuffer(PPBuffer p, char * buff, size_t size)
     return _read_from_pbuffer_generic(p, buff, size, 1);
 }
 
+size_t get_from_pbuffer(PPBuffer p, char * buff, size_t size)
+{
+    CONVERT(pb, p);
+
+    size_t already_get_size = 0;
+
+    PListHead ptr;
+    PPageNode node curr;
+
+    list_for_each(ptr, &pb->pages) {
+        curr = list_entry (ptr, PageNode, node);
+
+        size_t get_size = MIN(size - already_get_size, NODE_SIZE(curr));
+        memcpy(buff + already_get_size, NODE_START_POS(curr), get_size);
+        already_get_size += get_size;
+        if (already_get_size == size) {
+            break;
+        }
+    }
+
+    return alread_get_size;
+}
+
 size_t write_into_pbuffer_from_user(PPBuffer p, char __user * buff, size_t size)
 {
     return _write_into_pbuffer_generic(p, buff, size, 0);
@@ -219,7 +242,7 @@ size_t read_from_pbuffer_into_user(PPBuffer p, char __user * buff, size_t size)
     return _read_from_pbuffer_generic(p, buff, size, 0);
 }
 
-size_t _simple_char_index(void * buff, size_t size, void *arg)
+size_t simple_char_index(void * buff, size_t size, void *arg)
 {
     char target = * ((char *) arg);
     char * result = strnchr(buff, size, target); 
@@ -235,7 +258,7 @@ size_t find_in_pbuffer_in_range(PPBuffer p, size_t end,
     size_t target_pos = -1;
 
     if (!index) {
-        index = _simple_char_index;
+        index = simple_char_index;
     }
 
     size_t node_first_pos = 0;
