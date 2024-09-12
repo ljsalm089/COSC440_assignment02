@@ -81,7 +81,7 @@ void * _find_available_region_in_page(PCNode page)
             tmp->usage_size = size;
             tmp->start_addr = (void *) tmp;
 
-            // insert the new region behind the last node, make sure their orders are correct
+            // insert the new region behind the last node, make sure the order is correct
             list_add(&tmp->node, &last->node);
 
             return tmp->start_addr + sizeof(AllocatedRegion);
@@ -174,7 +174,7 @@ void release_mem(void * mem, int in_interrupt)
             // there should be at least 2 entries in the list
             PARegion start = list_firt_entry(&curr->sub_list, AllocatedRegion, node);
             PARegion end = list_last_entry(&curr->sub_list, AllocatedRegion, node);
-            if (end->node.prev == &start->node) {
+            if (list_next_entry(&start->node, node) == end) {
                 // only 2 entries in the list, release this page
                 list_del(&curr->node);
                 free_page((unsigned long) curr->page);
