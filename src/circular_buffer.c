@@ -1,7 +1,7 @@
-# include <linux/slab.h> // For `kmalloc`
 # include <linux/string.h>
 # include <linux/stddef.h>
 
+# include "mem_cache.h"
 # include "circular_buffer.h"
 
 # define TAG "CBuffer"
@@ -31,7 +31,7 @@ inline _PCBuffer _convert_cbuffer (PCBuffer buff)
 PCBuffer create_new_cbuffer (size_t size) 
 {
     size_t allocated_size = size + EXTRA_SIZE;
-    _PCBuffer buff = (_PCBuffer) kmalloc(allocated_size, GFP_KERNEL);
+    _PCBuffer buff = (_PCBuffer) alloc_mem(allocated_size);
     if (IS_ERR(buff)) {
         int err = PTR_ERR(buff);
         E(TAG, "Unable to allocate memory for CBuffer: %d", err);
@@ -57,7 +57,7 @@ void release_cbuffer(PCBuffer cbuff)
 {
     if (cbuff) {
         CONVERT(buff, cbuff);
-        kfree(buff);
+        release_mem((void *) buff);
     }
 }
 

@@ -1,3 +1,9 @@
+/**
+ * Author: Jiasheng Li
+ * Date: 11 Sept. 2024
+ * Description: Linux module for assignment 2 of cosc440. Implement an character device which acts like a pipe file, 
+ *              reads half byte of data from gpio each time, assembles them and return to user program.
+ */
 # include <linux/types.h>   // for multiple kinds of types
 # include <linux/cdev.h>
 # include <linux/device.h>
@@ -7,7 +13,6 @@
 # include <linux/moduleparam.h>
 # include <linux/init.h>
 # include <linux/kdev_t.h>
-# include <linux/slab.h> // For `kmalloc`
 # include <linux/string.h>
 # include <linux/uaccess.h> // `copy_from_user` `copy_to_user`
 # include <linux/semaphore.h> // for struct `semaphore` and corresponding function 
@@ -17,7 +22,7 @@
 
 # include "common.h"
 # include "circular_buffer.h"
-# include "page_buffer.h"
+# include "delimiter_buffer.h"
 # include "gpio_reader.h"
 # include "mem_cache.h"
 
@@ -57,18 +62,8 @@ typedef struct {
     // current using process id
     pid_t current_pid;
 
-
-    // page buffer which the user applications read from
-    PPBuffer p_buff;
-    // used to synchronise between tasklet and reading process
-    spinlock_t pbuff_lock;
-
-    // page buffer which is used to store the positions of the delimiter,
-    // the number of the delimiter is unpredictable,
-    // so use unlimited size buffer to save the positions
-    PPBuffer p_buff_possitions;
-    // count the number of characters that transfer into the page buffer, reset after there is a delimiter
-    size_t char_counter;
+    // page buffer which includs delimiter detecter
+    PDBuffer p_buff;
 
     // if there are some process waiting to read
     atomic_t waiting_for_read;
@@ -108,20 +103,19 @@ static char *asgn2_class_devnode(const struct device *dev, umode_t *mode)
 static void migration_tasklet(unsigned long data) 
 {
     int buff_size = 10;
-    char * tmpbuffer = (char *) kmalloc(buff_size * sizeof(char), GFP_KERNEL);
-    int ret;
-    if (IS_ERR(tmpbuffer)) {
-        ret = PTR_ERR(tmpbuffer);
+    char * tmpbuffer = (char *) alloc_mem(buff_size * sizeof(char));
+    if (NULL == tmpbuffer) {
         E(TAG, "Unable to allocate memory to migrate data from circular "
-                "buffer to page buffer: %d", ret);
+                "buffer to page buffer");
         return;
     }
     D(TAG, "The tasklet has been triggered");
 
-    unsigned long flags, plock_flags;
+    unsigned long flags;
     size_t read_size = 0;
     size_t total_size = 0;
-    spin_lock_irqsave(&d_data->pbuff_lock, plock_flags);
+    size_t write_size = 0;
+
     do {
         spin_lock_irqsave(&d_data->cbuff_lock, flags);
         read_size = read_from_cbuffer(d_data->c_buff, tmpbuffer, buff_size);
@@ -130,36 +124,21 @@ static void migration_tasklet(unsigned long data)
         }
         spin_unlock_irqrestore(&d_data->cbuff_lock, flags);
 
-        int data_size = read_size;
-        int delimiter_pos = simple_char_idnex(buff, data_size, (void *) &DELIMITER);
-        while (delimiter_pos >=0) {
-            d_data->char_encounter += delimiter_pos;
-            write_into_pbuffer(d_data->p_buff_possitions, &d_data->char_encounter, sizeof(d_data->char_encounter));
-            d_data->char_encounter = 0;
-
-            data_size -= delimiter + 1;
-            if (data_size > 0) {
-                delimiter_pos = simple_char_index(buff + delimiter_pos + 1, (void *) &DELIMITER);
-            } else {
-                break;
-            }
-        }
-
-        write_into_pbuffer(d_data->p_buff, tmpbuffer, read_size);
-
+        write_size = write_into_dbuffer(d_data->p_buff, tmpbuffer, read_size);
         D(TAG, "Migrated %d bytes into the page buffer", read_size);
-        total_size += read_size;
-    } while (read_size == buff_size);
+        total_size += write_size;
+    } while (read_size == buff_size && read_size == write_size);
     D(TAG, "Migrated %d bytes into the page buffer", total_size);
 
     if (total_size > 0) {
         atomic_set(&d_data->waiting_for_read, 0);
     }
 
-    spin_unlock_irqrestore(&d_data->pbuff_lock, plock_flags);
     if (total_size > 0) {
         wake_up_interruptible_nr(&d_data->read_queue, 1);
     }
+
+    release_mem((void *) tmpbuffer);
 }
 
 static irqreturn_t read_trigger(int req, void *dev_id)
@@ -225,15 +204,7 @@ static int device_open(struct inode *node, struct file *filep)
     
 static int device_release(struct inode *node, struct file *filep)
 {
-    spin_lock(&d_data->pbuff_lock);
-    size_t range = MIN(2, pbuffer_size(d_data->p_buff));
-    size_t delimiter_pos = find_in_pbuffer_in_range(d_data->p_buff, range, NULL, (void *) &DELIMITER);
-    if (0 == delimiter_pos) {
-        char tmp = '\0';
-        // strip the delimiter if it is the first character in the buffer
-        read_from_pbuffer(d_data->p_buff, &tmp, 1);
-    }
-    spin_unlock(&d_data->pbuff_lock);
+    dbuffer_end_phase_reading(d_data->p_buff);
     D(D_NAME, "Process(%d) close the device", currentpid);
     spin_lock(&d_data->lock);
     d_data->current_pid = -1;
@@ -249,6 +220,7 @@ static ssize_t device_read(struct file * filep, char __user * buff,
 {
     D(TAG, "Process(%d) try to read %d bytes data from device", currentpid, size);
     // in case the file is accessed from multiple processes/threads
+    // TODO here should use mutex instead
     if (down_interruptible(&d_data->sema))
         return -ERESTARTSYS;
 
@@ -256,51 +228,32 @@ static ssize_t device_read(struct file * filep, char __user * buff,
     if (0 >= size) goto release;
 
     PDevData p = d_data;
-    PPBuffer pbuffer = d_data->p_buff;
 
-    int ready_size = 0;
+    size_t ready_size = 0;
 
 
+recheck_if_has_data:
+    atomic_set(&p->waiting_for_read, 1);
     // keep waiting until there is some data in the buffer
-    while (ready_size == 0) {
-        // lock
-        spin_lock(&d_data->pbuff_lock);
-        ready_size = MIN(pbuffer_size(pbuffer), size);
-
-        if (ready_size == 0) {
-            atomic_set(&d_data->waiting_for_read, 1);
-            // unlock
-            spin_unlock(&d_data->pbuff_lock);
-            wait_event_interruptible_exclusive(p->read_queue, 
-                    atomic_read(&d_data->waiting_for_read) == 0);
-
-            if (signal_pending(current)) {
-                D(TAG, "Process(%d) received singal while waiting for data to read", currentpid);
-                already_read_size = -ERESTARTSYS;
-                goto release;
-            }
-        } else {
-            break;
+    size_t data_size = dbuffer_contains_data(p->p_buff);
+    if (data_size < 0) {
+        // no more data to read, just return
+        goto release;
+    } else if (0 == data_size) {
+        // need to wait
+        wait_event_interruptible_exclusive(p->read_queue, 
+                atomic_read(&p->waiting_for_read) == 0);
+        if (signal_pending(current)) {
+            D(TAG, "Process(%d) received singal while waiting for data to read", currentpid);
+            already_read_size = -ERESTARTSYS;
+            goto release;
         }
+        goto recheck_if_has_data;
     }
+
     // keep going, as there is some data in the buffer
     D(TAG, "There are %d bytes of data in the buffer for read", ready_size);
-
-    size_t delimiter_pos = find_in_pbuffer_in_range(pbuffer, ready_size + 1, NULL, (void *) &DELIMITER);
-    if (delimiter_pos >= 0) {
-        D(TAG, "There is an delimiter in the buffer, its position is %d", delimiter_pos);
-        ready_size = MIN(delimiter_pos, ready_size);
-    }
-
-    D(D_NAME, "Process(%d) start to read %d bytes from the file\n", currentpid, ready_size);
-
-    if (ready_size > 0) {
-        // need to read data from page buffer
-        already_read_size = read_from_pbuffer_into_user(pbuffer, buff, ready_size);
-    }
-    
-    // unlock
-    spin_unlock(&d_data->pbuff_lock);
+    already_read_size = read_from_dbuffer_to_user(p->p_buff, buff, size);
 
     *offset += already_read_size;
 
@@ -360,7 +313,7 @@ static int __init asgn2_init(void)
     init_mem_cache();
 
     // allocate memory to store data
-    d_data = (PDevData) alloc_mem(sizeof(DevData), 0);
+    d_data = (PDevData) alloc_mem(sizeof(DevData));
     if (!d_data) {
         ret = -ENOMEM;
         E(D_NAME, "failed to allocate memory to store data");
@@ -407,7 +360,7 @@ static int __init asgn2_init(void)
     D(D_NAME, "create device successfully");
     I(D_NAME, "initialise successfully");
 
-    d_data->p_buff = create_new_pbuffer();
+    d_data->p_buff = create_new_dbuffer();
     if (!d_data->p_buff) {
         ret = -EINVAL;
         E(TAG, "Unable to create page buffer");
@@ -436,7 +389,7 @@ error_with_cbuffer:
     release_cbuffer(d_data->c_buff);
 
 error_with_pbuffer:
-    release_pbuffer(d_data->p_buff);
+    release_dbuffer(d_data->p_buff);
 
 error_with_device:
     device_destroy(d_data->clazz, dev_no);
@@ -464,12 +417,12 @@ static void __exit asgn2_exit(void)
     tasklet_kill(&d_data->cbuffer_tasklet);
     release_gpio_reader(d_data->reader);
     release_cbuffer(d_data->c_buff);
-    release_pbuffer(d_data->p_buff);
+    release_dbuffer(d_data->p_buff);
     dev_t dev_no = MKDEV(major, 0);    
     device_destroy(d_data->clazz, dev_no);
     class_destroy(d_data->clazz);
     cdev_del(&d_data->dev);
-    release_mem((void *) d_data, 0);
+    release_mem((void *) d_data);
     release_major_number(dev_no);
     release_mem_cache();
 }

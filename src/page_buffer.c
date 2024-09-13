@@ -1,10 +1,10 @@
-# include <linux/slab.h> // for `kmalloc`
 # include <linux/gfp.h>  // for `get_zeroed_page`
 # include <linux/string.h> // for operations of string 
 # include <linux/uaccess.h> // for `copy_from_user` and `copy_to_user`
 
 
 # include "common.h"
+# include "mem_cache.h"
 # include "page_buffer.h"
 
 #define TAG "PageBuffer"
@@ -43,13 +43,13 @@ void _release_page_node(PPageNode n)
     if (n) {
         if (n->page) free_page((unsigned long) n->page);
 
-        kfree(n);
+        release_mem((void *) n);
     }
 }
 
 PPageNode _create_new_page_node(void)
 {
-    PPageNode node = (PPageNode) kmalloc(sizeof(PageNode), GFP_KERNEL);
+    PPageNode node = (PPageNode) alloc_mem(sizeof(PageNode));
     if (IS_ERR(node)) {
         int err = PTR_ERR(node);
         E(TAG, "Unable to allocate memory for PageNode: %d", err);
@@ -62,7 +62,7 @@ PPageNode _create_new_page_node(void)
         int err = PTR_ERR(node->page);
         E(TAG, "Unable to alocate new page for buffer %d", err);
 
-        kfree(node);
+        release_mem((void *) node);
         return NULL;
     }
 
@@ -71,7 +71,7 @@ PPageNode _create_new_page_node(void)
 
 PPBuffer create_new_pbuffer()
 {
-    _PPBuffer p = (_PPBuffer) kmalloc (sizeof(_PBuffer), GFP_KERNEL);
+    _PPBuffer p = (_PPBuffer) alloc_mem(sizeof(_PBuffer));
     if (IS_ERR(p)) {
         int err = PTR_ERR(p);
         E(TAG, "Unable to allocate memory for PBuffer: %d", err);
@@ -108,9 +108,8 @@ size_t _write_into_page_node(PPageNode node, char * buff, size_t expected_size, 
     if (kernel) {
         memcpy(NODE_END_POS(node), buff, write_size);
     } else {
-        if (copy_from_user(NODE_END_POS(node), buff, write_size)) {
-            return FAIL;
-        }
+        size_t not_copy_size = copy_from_user(NODE_END_POS(node), buff, write_size);
+        write_size = write_size - not_copy_size;
     }
     node->end_pos += write_size;
     return write_size;
@@ -138,13 +137,15 @@ size_t _write_into_pbuffer_generic(PPBuffer p, char * buff, size_t size, int ker
  
         size_t write_size = _write_into_page_node(node, 
                 buff + already_write_size, size - already_write_size, kernel);
-        if (write_size == FAIL) {
-            if (0 == already_write_size) {
-                already_write_size = FAIL;
-            }
+        int has_written_enough = write_size == size - already_write_size;
+        already_write_size += write_size;
+
+        if (!has_written_enough && !NODE_IS_FULL(node)) {
+            // the node is not full yet, but hasn't written enough data into this node
+            // this means some error happen and cannot continue writing
+            // (e.g., some error in the user space buffer)
             break;
         }
-        already_write_size += write_size;
     }
 
     return already_write_size;
@@ -156,9 +157,8 @@ size_t _read_from_page_node(PPageNode node, char * buff, size_t expected_size, i
     if (kernel) {
         memcpy(buff, NODE_START_POS(node), read_size);
     } else {
-        if(copy_to_user(buff, NODE_START_POS(node), read_size)) {
-            return FAIL;
-        }
+        size_t not_copy_size = copy_to_user(buff, NODE_START_POS(node), read_size);
+        read_size = read_size - not_copy_size;
     }
     node->start_pos += read_size;
     return read_size;
@@ -183,16 +183,19 @@ size_t _read_from_pbuffer_generic(PPBuffer p, char * buff, size_t size, int kern
         size_t read_size = _read_from_page_node(node, buff + already_read_size,
                 size - already_read_size, kernel);
 
-        if (read_size == FAIL) {
-            if (already_read_size == 0) {
-                already_read_size = FAIL;
-            }
-            break;
-        }
+        int has_read_enough = read_size == size - already_read_size;
 
         already_read_size += read_size;
         if (NODE_SIZE(node) == 0 && NODE_IS_FULL(node)) {
             list_del(&node->node);
+        }
+
+        if (NODE_SIZE(node) > 0 && !has_read_enough) {
+            // there is still some data in this node, 
+            // but not read enough data from this node
+            // that means some error happen and cannot continue reading
+            // (e.g., some error in the user space buffer)
+            break;
         }
     }
 
@@ -216,10 +219,10 @@ size_t get_from_pbuffer(PPBuffer p, char * buff, size_t size)
     size_t already_get_size = 0;
 
     PListHead ptr;
-    PPageNode node curr;
+    PPageNode curr;
 
     list_for_each(ptr, &pb->pages) {
-        curr = list_entry (ptr, PageNode, node);
+        curr = list_entry(ptr, PageNode, node);
 
         size_t get_size = MIN(size - already_get_size, NODE_SIZE(curr));
         memcpy(buff + already_get_size, NODE_START_POS(curr), get_size);
@@ -229,7 +232,7 @@ size_t get_from_pbuffer(PPBuffer p, char * buff, size_t size)
         }
     }
 
-    return alread_get_size;
+    return already_get_size;
 }
 
 size_t write_into_pbuffer_from_user(PPBuffer p, char __user * buff, size_t size)
@@ -292,7 +295,7 @@ size_t find_in_pbuffer(PPBuffer p, size_t start_pos,
     size_t target_pos = -1;
 
     if (!index) {
-        index = _simple_char_index;
+        index = simple_char_index;
     }
     
     size_t node_first_pos = 0;
@@ -342,5 +345,5 @@ void release_pbuffer(PPBuffer p)
         }
     }
 
-    kfree(pb);
+    release_mem((void *) pb);
 }
