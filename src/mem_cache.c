@@ -90,7 +90,6 @@ void * _find_available_region_in_page(PCNode page, int size)
     list_for_each(ptr, &page->sub_list) {
         region = list_entry(ptr, AllocatedRegion, node);
 
-        D(TAG, "Current region start addr: %lu", region->start_addr);
         unsigned long last_end_addr = last->start_addr + last->allocated_size;
         // be very carefull, because the type is unsigned long, 
         // which means the generated result won't be negative value
@@ -117,16 +116,6 @@ void * _find_available_region_in_page(PCNode page, int size)
         last = region;
     }
 
-    DEBUG_BLOCK(
-        D(TAG, "Current nodes in page: %lu", page->page);
-        int index = 0;
-        list_for_each(ptr, &page->sub_list) {
-            region = list_entry(ptr, AllocatedRegion, node);
-            D(TAG, "Node #%d, start addr: %lu, size: %d", index, 
-                     region->start_addr, region->allocated_size);
-            index ++;
-        }
-    );
     return result;
 }
 

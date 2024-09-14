@@ -108,6 +108,7 @@ size_t write_into_dbuffer(PDBuffer b, void * buff, size_t size)
         if (index >= 0) {
             while (index >= 0) {
                 D(TAG, "Found delimiter in the buffer, position is: %d", index);
+                D(TAG, "String before delimiter: %s", (char *)check_buff);
 
                 last_record->buffer_size += index;
                 last_record->has_delimiter = 1;

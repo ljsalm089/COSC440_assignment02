@@ -15,10 +15,10 @@
 # include <linux/kdev_t.h>
 # include <linux/string.h>
 # include <linux/uaccess.h> // `copy_from_user` `copy_to_user`
-# include <linux/semaphore.h> // for struct `semaphore` and corresponding function 
 # include <linux/wait.h>   // for `wait_queue_head_t`
 # include <linux/sched.h> // for macro `current` to get current process info
 # include <linux/spinlock.h> // for spinlock_t and related functions
+# include <linux/mutex.h>
 
 # include "common.h"
 # include "circular_buffer.h"
@@ -47,8 +47,8 @@ typedef struct {
     struct device *device;
     struct cdev dev;
 
-    // semaphore for reading, writing and memory maping
-    struct semaphore sema;
+    // mutex for reading
+    struct mutex mutex_lock;
 
     // wait queue for those processes open the file as read-only or read-write
     wait_queue_head_t wait_queue;
@@ -120,7 +120,8 @@ static void migration_tasklet(unsigned long data)
     do {
         spin_lock_wrapper(&d_data->cbuff_lock);
         read_size = read_from_cbuffer(d_data->c_buff, tmpbuffer, buff_size);
-        D(TAG, "read data from circular buffer in the tasklet, read size: %d", read_size);
+        D(TAG, "read data from circular buffer in the tasklet,"
+                " read size: %d content: %s", read_size, tmpbuffer);
         if (read_size < buff_size) {
             d_data->tasklet_running = 0;
         }
@@ -224,22 +225,17 @@ static ssize_t device_read(struct file * filep, char __user * buff,
 {
     D(TAG, "Process(%d) try to read %d bytes data from device", currentpid, size);
     // in case the file is accessed from multiple processes/threads
-    // TODO here should use mutex instead
-    if (down_interruptible(&d_data->sema))
-        return -ERESTARTSYS;
+    mutex_lock(&d_data->mutex_lock);
 
     size_t already_read_size = 0;
     if (0 >= size) goto release;
 
     PDevData p = d_data;
 
-    size_t ready_size = 0;
-
-
 recheck_if_has_data:
     atomic_set(&p->waiting_for_read, 1);
     // keep waiting until there is some data in the buffer
-    size_t data_size = dbuffer_contains_data(p->p_buff);
+    int data_size = dbuffer_contains_data(p->p_buff);
     if (data_size < 0) {
         // no more data to read, just return
         goto release;
@@ -256,13 +252,13 @@ recheck_if_has_data:
     }
 
     // keep going, as there is some data in the buffer
-    D(TAG, "There are %d bytes of data in the buffer for read", ready_size);
+    D(TAG, "There are %d bytes of data in the buffer for read", data_size);
     already_read_size = read_from_dbuffer_to_user(p->p_buff, buff, size);
 
     *offset += already_read_size;
 
 release:
-    up(&d_data->sema);
+    mutex_unlock(&d_data->mutex_lock);
 
     return already_read_size;
 }
@@ -329,8 +325,8 @@ static int __init asgn2_init(void)
     init_waitqueue_head(&d_data->wait_queue);
     init_waitqueue_head(&d_data->read_queue);
 
-    // initialise the semaphore
-    sema_init(&d_data->sema, 1);
+    // initialise the mutex
+    mutex_init(&d_data->mutex_lock);
 
     // initialise dev
     cdev_init(&d_data->dev, &fops);
@@ -405,7 +401,8 @@ error_with_cdev:
     cdev_del(&d_data->dev);
 
 error_with_data:
-    kfree(d_data);
+    mutex_destroy(&d_data->mutex_lock);
+    release_mem((void *) d_data);
 
 error_with_major:
     release_major_number(dev_no);
@@ -426,6 +423,7 @@ static void __exit asgn2_exit(void)
     device_destroy(d_data->clazz, dev_no);
     class_destroy(d_data->clazz);
     cdev_del(&d_data->dev);
+    mutex_destroy(&d_data->mutex_lock);
     release_mem((void *) d_data);
     release_major_number(dev_no);
     release_mem_cache();

@@ -1,5 +1,9 @@
 #!/bin/bash
 
+lsmod | grep asgn
+if [ $? -eq 0 ]; then
+    sudo rmmod asgn
+fi
 make clean
 make all
 sudo insmod asgn.ko
