@@ -159,7 +159,8 @@ static irqreturn_t read_trigger(int req, void *dev_id)
                 || r == DELIMITER) {
             D(TAG, "Need to check if tasklet is running");
             if (!d_data->tasklet_running) {
-                D(TAG, "The tasklet is not running, trigger to migrate data in circular buffer to page buffer");
+                D(TAG, "The tasklet is not running, trigger to migrate data "
+                        "in circular buffer to page buffer");
                 d_data->tasklet_running = 1;
                 tasklet_schedule(&d_data->cbuffer_tasklet);
             }
