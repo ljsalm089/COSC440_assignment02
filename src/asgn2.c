@@ -119,7 +119,6 @@ static void migration_tasklet(unsigned long data)
 
     do {
         spin_lock_wrapper(&d_data->cbuff_lock);
-        D(TAG, "read data from circular buffer in the tasklet");
         read_size = read_from_cbuffer(d_data->c_buff, tmpbuffer, buff_size);
         D(TAG, "read data from circular buffer in the tasklet, read size: %d", read_size);
         if (read_size < buff_size) {
@@ -127,13 +126,11 @@ static void migration_tasklet(unsigned long data)
         }
         spin_unlock_wrapper(&d_data->cbuff_lock);
 
-        D(TAG, "write data into dbuffer, write size: %d", read_size);
-        // write_size = read_size;
         write_size = write_into_dbuffer(d_data->p_buff, tmpbuffer, read_size);
         D(TAG, "Migrated %d bytes into the page buffer", read_size);
         total_size += write_size;
     } while (read_size == buff_size && read_size == write_size);
-    D(TAG, "Migrated %d bytes into the page buffer", total_size);
+    D(TAG, "Migrated %d bytes into the page buffer totally", total_size);
 
     if (total_size > 0) {
         atomic_set(&d_data->waiting_for_read, 0);
@@ -165,9 +162,6 @@ static irqreturn_t read_trigger(int req, void *dev_id)
                 D(TAG, "The tasklet is not running, trigger to migrate data in circular buffer to page buffer");
                 d_data->tasklet_running = 1;
                 tasklet_schedule(&d_data->cbuffer_tasklet);
-            }
-            if (r == DELIMITER) {
-                D(TAG, "Read a delimiter into the circular bufffer");
             }
         }
 

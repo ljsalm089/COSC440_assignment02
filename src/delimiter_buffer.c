@@ -95,7 +95,6 @@ size_t write_into_dbuffer(PDBuffer b, void * buff, size_t size)
 
     spin_lock_wrapper(&pb->lock);
 
-    D(TAG, "Write %d bytes data into dbuffer from %lu", size, P2L(buff));
     PDRecord last_record = list_last_entry(&pb->records, DRecord, node);
     size_t write_size = write_into_pbuffer(pb->page_buffer, buff, size);
     D(TAG, "Successfully write %d bytes data into dbuffer from %lu", 
