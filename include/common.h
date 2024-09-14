@@ -40,8 +40,25 @@ typedef struct list_head ListHead;
 typedef ListHead * PListHead;
 
 #define spin_lock_wrapper(l) unsigned long __flags; \
-    if (in_interrupt()) spin_lock_irqsave((l), __flags); else spin_lock((l));
+    if (in_interrupt()) {\
+        D(TAG, "Locking " #l); \
+        spin_lock_irqsave((l), __flags);\
+        D(TAG, "Locked " #l);\
+    } else {\
+        D(TAG, "Locking " #l); \
+        spin_lock((l));\
+        D(TAG, "Locked " #l);\
+    }
 
-#define spin_unlock_wrapper(l) if (in_interrupt()) spin_unlock_irqrestore((l), __flags); else spin_unlock((l));
+
+#define spin_unlock_wrapper(l) if (in_interrupt()) {\
+    D(TAG, "Unlocking " #l); \
+    spin_unlock_irqrestore((l), __flags);\
+    D(TAG, "Unlocked " #l);\
+} else {\
+    D(TAG, "Unlocking " #l); \
+    spin_unlock((l));\
+    D(TAG, "Unlocked " #l);\
+}
 
 #endif // __COMMON_H__

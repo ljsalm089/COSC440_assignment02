@@ -89,7 +89,7 @@ size_t cbuffer_available_size(PCBuffer cbuff)
 
 size_t write_into_cbuffer(PCBuffer cbuff, char * buff, size_t size)
 {
-    // D(TAG, "Try to write %d bytes data into the buffer", size);
+    D(TAG, "Try to write %d bytes data into the buffer", size);
     size_t available_size = cbuffer_available_size(cbuff);
     size_t target_write_size = size;
     if (size > available_size) {
@@ -108,10 +108,11 @@ size_t write_into_cbuffer(PCBuffer cbuff, char * buff, size_t size)
         memcpy(pb->buffer + W_POS(pb), buff + already_write_size, write_size);
         pb->w_pos += write_size;
         already_write_size += write_size;
+        D(TAG, "If need next round of writing: %d", need_next_round);
     } while (need_next_round);
 
     _adjust_pos(pb);
-    // D(TAG, "Successfully wrote %d bytes data into the buffer", already_write_size);
+    D(TAG, "Successfully wrote %d bytes data into the buffer", already_write_size);
     return already_write_size;
 }
 

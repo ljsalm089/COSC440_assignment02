@@ -143,14 +143,14 @@ static void migration_tasklet(unsigned long data)
 
 static irqreturn_t read_trigger(int req, void *dev_id)
 {
+    D(TAG, "Trigger the interrupt handler");
     char r = read_half_byte_from_reader(d_data->reader);
     if (d_data->counter % 2 == 0) {
         d_data->half_byte = r;
     } else {
         r = (d_data->half_byte << 4 | r);
-        unsigned long flags;
 
-        spin_lock_irqsave(&d_data->cbuff_lock, flags);
+        spin_lock_wrapper(&d_data->cbuff_lock);
         write_into_cbuffer(d_data->c_buff, &r, 1);
         if (cbuffer_size(d_data->c_buff) > cbuffer_available_size(d_data->c_buff) 
                 || r == DELIMITER) {
@@ -163,9 +163,10 @@ static irqreturn_t read_trigger(int req, void *dev_id)
                 D(TAG, "Read a delimiter into the circular bufffer");
             }
         }
-        spin_unlock_irqrestore(&d_data->cbuff_lock, flags);
+        spin_unlock_wrapper(&d_data->cbuff_lock);
     }
     d_data->counter ++;
+    D(TAG, "Already wrote %d bytes into the circular buffer", d_data->counter / 2);
     return 0;
 }
 
