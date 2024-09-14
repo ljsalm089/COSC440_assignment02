@@ -3,7 +3,7 @@
 
 #include <linux/printk.h>
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 
 #define D(t_, fmt, ...) printk(KERN_DEBUG "%s: " fmt, t_, ##__VA_ARGS__)
@@ -13,16 +13,6 @@
 #define E(t_, fmt, ...) printk(KERN_ERR "%s: " fmt, t_, ##__VA_ARGS__)
 
 #define DEBUG_BLOCK(x) x
-
-#else
-
-#define D(T_, fmt, ...) 
-#define I(t_, fmt, ...) printk(KERN_INFO fmt, ##__VA_ARGS__)
-#define W(t_, fmt, ...) printk(KERN_WARNING fmt, ##__VA_ARGS__)
-#define A(t_, fmt, ...) printk(KERN_ALERT fmt, ##__VA_ARGS__)
-#define E(t_, fmt, ...) printk(KERN_ERR fmt, ##__VA_ARGS__)
-
-#define DEBUG_BLOCK(x)
 
 #define spin_lock_wrapper(l) unsigned long __flags; \
     if (in_interrupt()) {\
@@ -44,6 +34,29 @@
     D(TAG, "Unlocking " #l); \
     spin_unlock((l));\
     D(TAG, "Unlocked " #l);\
+}
+
+#else
+
+#define D(T_, fmt, ...) 
+#define I(t_, fmt, ...) printk(KERN_INFO fmt, ##__VA_ARGS__)
+#define W(t_, fmt, ...) printk(KERN_WARNING fmt, ##__VA_ARGS__)
+#define A(t_, fmt, ...) printk(KERN_ALERT fmt, ##__VA_ARGS__)
+#define E(t_, fmt, ...) printk(KERN_ERR fmt, ##__VA_ARGS__)
+
+#define DEBUG_BLOCK(x)
+
+#define spin_lock_wrapper(l) unsigned long __flags; \
+    if (in_interrupt()) {\
+        spin_lock_irqsave((l), __flags);\
+    } else {\
+        spin_lock((l));\
+    }
+
+#define spin_unlock_wrapper(l) if (in_interrupt()) {\
+    spin_unlock_irqrestore((l), __flags);\
+} else {\
+    spin_unlock((l));\
 }
 
 #endif // DEBUG
@@ -62,18 +75,5 @@ typedef struct list_head ListHead;
 typedef ListHead * PListHead;
 
 #define P2L(r) ((unsigned long) (r))
-
-#define spin_lock_wrapper(l) unsigned long __flags; \
-    if (in_interrupt()) {\
-        spin_lock_irqsave((l), __flags);\
-    } else {\
-        spin_lock((l));\
-    }
-
-#define spin_unlock_wrapper(l) if (in_interrupt()) {\
-    spin_unlock_irqrestore((l), __flags);\
-} else {\
-    spin_unlock((l));\
-}
 
 #endif // __COMMON_H__

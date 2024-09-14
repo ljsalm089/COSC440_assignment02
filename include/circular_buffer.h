@@ -1,8 +1,6 @@
 #ifndef __cbuffer_H__
 #define __cbuffer_H__
 
-# include "common.h"
-
 #define CBUFFER_SIZE 50
 
 typedef struct {

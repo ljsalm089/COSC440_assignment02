@@ -1,6 +1,7 @@
 # include <linux/string.h>
 # include <linux/stddef.h>
 
+# include "common.h"
 # include "mem_cache.h"
 # include "circular_buffer.h"
 
