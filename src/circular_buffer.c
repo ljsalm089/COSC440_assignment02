@@ -32,11 +32,11 @@ PCBuffer create_new_cbuffer (size_t size)
 {
     size_t allocated_size = size + EXTRA_SIZE;
     _PCBuffer buff = (_PCBuffer) alloc_mem(allocated_size);
-    if (IS_ERR(buff)) {
-        int err = PTR_ERR(buff);
-        E(TAG, "Unable to allocate memory for CBuffer: %d", err);
+    if (NULL == buff) {
+        E(TAG, "Unable to allocate memory for CBuffer");
         return NULL;
     }
+    D(TAG, "Allocated memory: %lu, %lu", P2L(buff), P2L(buff) + size);
     return init_new_cbuffer(buff, allocated_size);
 }
 

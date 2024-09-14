@@ -95,36 +95,44 @@ size_t write_into_dbuffer(PDBuffer b, void * buff, size_t size)
 
     spin_lock_wrapper(&pb->lock);
 
+    D(TAG, "Write %d bytes data into dbuffer from %lu", size, P2L(buff));
     PDRecord last_record = list_last_entry(&pb->records, DRecord, node);
     size_t write_size = write_into_pbuffer(pb->page_buffer, buff, size);
+    D(TAG, "Successfully write %d bytes data into dbuffer from %lu", 
+            write_size, P2L(buff));
 
     if (write_size > 0) {
         // detect all demiliters and generate corresponding delimiter records
         // update the buffer size before the delimiter
         void * check_buff = buff;
-        size_t index = simple_char_index(check_buff, write_size, (void *) &delimiter);
-        while (index >= 0) {
-            last_record->buffer_size += index;
-            last_record->has_delimiter = 1;
+        int index = simple_char_index(check_buff, write_size, (void *) &delimiter);
+        if (index >= 0) {
+            while (index >= 0) {
+                D(TAG, "Found delimiter in the buffer, position is: %d", index);
 
-            // generate a new record and append it to the list
-            last_record = alloc_mem(sizeof(DRecord));
-            if (!last_record) {
-                break;
-            }
-            memset(last_record, 0, sizeof(DRecord));
-            list_add_tail(&last_record->node, &pb->records);
+                last_record->buffer_size += index;
+                last_record->has_delimiter = 1;
+    
+                // generate a new record and append it to the list
+                last_record = alloc_mem(sizeof(DRecord));
+                if (NULL == last_record) {
+                    break;
+                }
+                memset(last_record, 0, sizeof(DRecord));
+                list_add_tail(&last_record->node, &pb->records);
 
-            check_buff += index + 1;
-            if (check_buff >= buff + write_size) {
-                break;
+                check_buff += index + 1;
+                if (check_buff >= buff + write_size) {
+                    break;
+                }
+                // make sure all delimiters in the buffer have been recorded
+                index = simple_char_index(check_buff, buff + write_size - check_buff, 
+                        (void *) &delimiter);
             }
-            // make sure all delimiters in the buffer have been recorded
-            index = simple_char_index(check_buff, buff + write_size - check_buff, 
-                    (void *) &delimiter);
+        } else {
+            last_record->buffer_size += write_size;
         }
     }
-
     spin_unlock_wrapper(&pb->lock);
     return write_size;
 }

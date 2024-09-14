@@ -102,28 +102,33 @@ static char *asgn2_class_devnode(const struct device *dev, umode_t *mode)
 
 static void migration_tasklet(unsigned long data) 
 {
+    D(TAG, "The tasklet has been triggered");
     int buff_size = 10;
     char * tmpbuffer = (char *) alloc_mem(buff_size * sizeof(char));
     if (NULL == tmpbuffer) {
         E(TAG, "Unable to allocate memory to migrate data from circular "
                 "buffer to page buffer");
         return;
+    } else {
+        D(TAG, "Allocated memory successfully: %lu", P2L(tmpbuffer));
     }
-    D(TAG, "The tasklet has been triggered");
 
-    unsigned long flags;
     size_t read_size = 0;
     size_t total_size = 0;
     size_t write_size = 0;
 
     do {
-        spin_lock_irqsave(&d_data->cbuff_lock, flags);
+        spin_lock_wrapper(&d_data->cbuff_lock);
+        D(TAG, "read data from circular buffer in the tasklet");
         read_size = read_from_cbuffer(d_data->c_buff, tmpbuffer, buff_size);
+        D(TAG, "read data from circular buffer in the tasklet, read size: %d", read_size);
         if (read_size < buff_size) {
             d_data->tasklet_running = 0;
         }
-        spin_unlock_irqrestore(&d_data->cbuff_lock, flags);
+        spin_unlock_wrapper(&d_data->cbuff_lock);
 
+        D(TAG, "write data into dbuffer, write size: %d", read_size);
+        // write_size = read_size;
         write_size = write_into_dbuffer(d_data->p_buff, tmpbuffer, read_size);
         D(TAG, "Migrated %d bytes into the page buffer", read_size);
         total_size += write_size;
@@ -151,9 +156,11 @@ static irqreturn_t read_trigger(int req, void *dev_id)
         r = (d_data->half_byte << 4 | r);
 
         spin_lock_wrapper(&d_data->cbuff_lock);
+
         write_into_cbuffer(d_data->c_buff, &r, 1);
         if (cbuffer_size(d_data->c_buff) > cbuffer_available_size(d_data->c_buff) 
                 || r == DELIMITER) {
+            D(TAG, "Need to check if tasklet is running");
             if (!d_data->tasklet_running) {
                 D(TAG, "The tasklet is not running, trigger to migrate data in circular buffer to page buffer");
                 d_data->tasklet_running = 1;
@@ -163,6 +170,7 @@ static irqreturn_t read_trigger(int req, void *dev_id)
                 D(TAG, "Read a delimiter into the circular bufffer");
             }
         }
+
         spin_unlock_wrapper(&d_data->cbuff_lock);
     }
     d_data->counter ++;
@@ -177,14 +185,14 @@ static int device_open(struct inode *node, struct file *filep)
 
     do {
         int should_wait = 1;
-        spin_lock(&d_data->lock);
+        spin_lock_wrapper(&d_data->lock);
         // only when the current running process pid is -1, 
         // the process is permitted to keep going
         if (d_data->current_pid < 0) {
             d_data->current_pid = pid;
             should_wait = 0;
         }
-        spin_unlock(&d_data->lock);
+        spin_unlock_wrapper(&d_data->lock);
 
         if (should_wait) {
             D(TAG, "Process(%d) hasn't been granted the resource, keep waiting", pid);
@@ -207,9 +215,9 @@ static int device_release(struct inode *node, struct file *filep)
 {
     dbuffer_end_phase_reading(d_data->p_buff);
     D(D_NAME, "Process(%d) close the device", currentpid);
-    spin_lock(&d_data->lock);
+    spin_lock_wrapper(&d_data->lock);
     d_data->current_pid = -1;
-    spin_unlock(&d_data->lock);
+    spin_unlock_wrapper(&d_data->lock);
     
     // wake up one of the processes waiting for the resource
     wake_up_interruptible_nr(&d_data->wait_queue, 1);

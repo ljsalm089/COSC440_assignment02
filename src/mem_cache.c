@@ -11,8 +11,6 @@
 #endif
 #define TAG "MCache"
 
-#define P2L(r) ((unsigned long) (r))
-
 
 // the struct is allocated at the beginning of the page
 // after being created, there are at least 2 AllocatedRegions in the `sub_list`
@@ -127,7 +125,6 @@ void * _find_available_region_in_page(PCNode page, int size)
             D(TAG, "Node #%d, start addr: %lu, size: %d", index, 
                      region->start_addr, region->allocated_size);
             index ++;
-            if (index >= 5) break;
         }
     );
     return result;
